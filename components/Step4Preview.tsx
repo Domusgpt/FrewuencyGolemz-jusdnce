@@ -1,11 +1,11 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Play, Pause, Video, Settings, Mic, MicOff, Maximize2, Minimize2, Upload, X, Loader2, Sliders, Package, Music, ChevronDown, ChevronUp, Activity, Download, FileVideo, Radio, Star, Camera, Volume2, VolumeX, Sparkles, CircleDot, Monitor, Smartphone, Square, Eye, Layers, Plus, Trash2, Zap } from 'lucide-react';
-import { AppState, EnergyLevel, MoveDirection, FrameType, DeckSlot, SavedProject, GeneratedFrame } from '../types';
+import { Play, Pause, Video, Settings, Mic, MicOff, Maximize2, Minimize2, Upload, X, Loader2, Sliders, Package, Music, ChevronDown, ChevronUp, Activity, Download, FileVideo, Radio, Star, Camera, Volume2, VolumeX, Sparkles, CircleDot, Monitor, Smartphone, Square, Eye, Layers, Plus, Trash2, Zap, RotateCcw, ZapOff, Shuffle, Merge, Grid } from 'lucide-react';
+import { AppState, EnergyLevel, MoveDirection, FrameType, DeckSlot, SavedProject, GeneratedFrame, SequenceMode, FXSettings } from '../types';
 import { QuantumVisualizer } from './Visualizer/HolographicVisualizer';
 import { generatePlayerHTML } from '../services/playerExport';
 import { STYLE_PRESETS } from '../constants';
-import { useAudioAnalyzer } from '../hooks/useAudioAnalyzer';
+import { useAudioPlayer } from '../hooks/useAudioPlayer';
 
 interface Step4Props {
   state: AppState;
@@ -17,40 +17,36 @@ interface Step4Props {
 
 type AspectRatio = '9:16' | '1:1' | '16:9';
 type Resolution = '720p' | '1080p' | '4K';
-
-type RhythmPhase = 'AMBIENT' | 'WARMUP' | 'SWING_LEFT' | 'SWING_RIGHT' | 'DROP' | 'CHAOS';
-
-// Interpolation Modes
 type InterpMode = 'CUT' | 'SLIDE' | 'MORPH' | 'SMOOTH' | 'ZOOM_IN';
-type FXMode = 'NORMAL' | 'INVERT' | 'BW' | 'STROBE' | 'GHOST';
 
 export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSpendCredit, onUploadAudio, onSaveProject }) => {
   const bgCanvasRef = useRef<HTMLCanvasElement>(null);
   const charCanvasRef = useRef<HTMLCanvasElement>(null); 
   const containerRef = useRef<HTMLDivElement>(null);
-  const audioElementRef = useRef<HTMLAudioElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   
-  // -- Audio Hook --
+  // -- Audio System --
   const { 
-    audioDestRef, 
-    isMicActive, 
-    connectFileAudio, 
-    connectMicAudio, 
-    disconnectMic, 
-    getFrequencyData 
-  } = useAudioAnalyzer();
+      audioElement, 
+      isPlaying, 
+      isMicActive, 
+      togglePlay, 
+      toggleMic, 
+      getAnalysis,
+      audioDestNode 
+  } = useAudioPlayer(state.audioPreviewUrl);
 
   const [isRecording, setIsRecording] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [showDeck, setShowDeck] = useState(false); // Neural Deck Visibility
-  
-  // -- FX LAYER STATE --
+  const [showDeck, setShowDeck] = useState(false);
   const [showFX, setShowFX] = useState(false);
-  const [fxSettings, setFxSettings] = useState({
+  
+  const [fxSettings, setFxSettings] = useState<FXSettings>({
       hue: { base: 0, reactive: 0 },
       aberration: { base: 0, reactive: 20 },
-      scanlines: { base: 0, reactive: 0 }
+      scanlines: { base: 0, reactive: 0 },
+      stutter: { base: 20, reactive: 50 }, 
+      chaos: { base: 0, reactive: 0 }       
   });
 
   const [exportRatio, setExportRatio] = useState<AspectRatio>('9:16');
@@ -66,35 +62,40 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
   const requestRef = useRef<number>(0);
   const lastFrameTimeRef = useRef<number>(0); 
   const lastBeatTimeRef = useRef<number>(0);
-  const lastStutterTimeRef = useRef<number>(0);
+  const lastStutterRef = useRef<number>(0);
   
-  const [brainState, setBrainState] = useState({ activePoseName: 'BASE', fps: 0 });
-  const [hoveredFrame, setHoveredFrame] = useState<GeneratedFrame | null>(null); // For Tooltip
+  const [brainState, setBrainState] = useState({ activePoseName: 'BASE', fps: 0, mode: 'GROOVE' });
+  const [hoveredFrame, setHoveredFrame] = useState<GeneratedFrame | null>(null);
 
   // --- MULTI-DECK STATE ---
   const [decks, setDecks] = useState<DeckSlot[]>([
-      { id: 0, rig: null, isActive: true, opacity: 1.0 },
-      { id: 1, rig: null, isActive: false, opacity: 1.0 },
-      { id: 2, rig: null, isActive: false, opacity: 1.0 },
-      { id: 3, rig: null, isActive: false, opacity: 1.0 },
+      { id: 0, rig: null, isActive: true, mixMode: 'sequencer', opacity: 1.0 },
+      { id: 1, rig: null, isActive: false, mixMode: 'sequencer', opacity: 1.0 },
+      { id: 2, rig: null, isActive: false, mixMode: 'sequencer', opacity: 1.0 },
+      { id: 3, rig: null, isActive: false, mixMode: 'sequencer', opacity: 1.0 },
   ]);
 
-  // --- INTERPOLATION STATE ---
+  // --- KINETIC GRAPH STATE ---
+  const sequenceModeRef = useRef<SequenceMode>('GROOVE');
+  const barCounterRef = useRef<number>(0);
+  const phraseCounterRef = useRef<number>(0); 
+  
   const sourcePoseRef = useRef<string>('base'); 
   const targetPoseRef = useRef<string>('base'); 
+  const currentDeckIdRef = useRef<number>(0); // Tracks which deck owns the current target frame
   const transitionProgressRef = useRef<number>(1.0); 
   const transitionSpeedRef = useRef<number>(10.0);   
   const transitionModeRef = useRef<InterpMode>('CUT');
-
-  // --- DYNAMIC CHOREOGRAPHY STATE ---
-  const energyHistoryRef = useRef<number[]>(new Array(30).fill(0));
-  const beatCounterRef = useRef<number>(0); 
-  const closeupLockTimeRef = useRef<number>(0); 
-  const currentDirectionRef = useRef<MoveDirection>('center');
+  
+  // Triggers
+  const triggerStutterRef = useRef<boolean>(false);
+  const triggerReverseRef = useRef<boolean>(false);
+  const triggerGlitchRef = useRef<boolean>(false);
 
   const BASE_ZOOM = 1.15;
   const camZoomRef = useRef<number>(BASE_ZOOM);
   const camPanXRef = useRef<number>(0); 
+  const camPanYRef = useRef<number>(0); 
   
   // Physics
   const charSquashRef = useRef<number>(1.0); 
@@ -110,187 +111,124 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
   const masterRotZRef = useRef<number>(0); 
   const masterVelZRef = useRef<number>(0); 
   
-  // FX
-  const ghostAmountRef = useRef<number>(0); 
-  const fluidStutterRef = useRef<number>(0); 
-  const scratchModeRef = useRef<boolean>(false);
   const rgbSplitRef = useRef<number>(0); 
-  const flashIntensityRef = useRef<number>(0); 
-  const activeFXModeRef = useRef<FXMode>('NORMAL'); 
   
   const [frameCount, setFrameCount] = useState(0);
   const [imagesReady, setImagesReady] = useState(false);
-  
-  const [isPlaying, setIsPlaying] = useState(false);
   const [superCamActive, setSuperCamActive] = useState(true);
+  
+  // Lookup map: Key = "deckId_poseName"
+  const frameLookupRef = useRef<Map<string, GeneratedFrame>>(new Map());
 
-  // Helper to process frames into buckets and load images
+  // HELPER: Process Rig into Buckets & Machine Categories
   const processRig = useCallback(async (frames: GeneratedFrame[], slotId: number) => {
       const sorted: Record<EnergyLevel, GeneratedFrame[]> = { low: [], mid: [], high: [] };
       const closeups: GeneratedFrame[] = [];
+      const hands: GeneratedFrame[] = [];
+      const feet: GeneratedFrame[] = [];
+      
+      const mandalas: GeneratedFrame[] = [];
+      const virtuals: GeneratedFrame[] = [];
+      const acrobatics: GeneratedFrame[] = [];
+
       const images: Record<string, HTMLImageElement> = {};
       const loadPromises: Promise<void>[] = [];
 
-      // HELPER: Load and cache image
       const preload = (url: string, pose: string) => {
           return new Promise<void>((resolve) => {
-              if (images[pose]) { resolve(); return; } // already loaded
-              
+              if (images[pose]) { resolve(); return; } 
               const img = new Image();
               img.crossOrigin = "anonymous";
               img.src = url;
               img.onload = () => resolve();
-              img.onerror = () => resolve(); // Don't block
+              img.onerror = () => resolve(); 
               images[pose] = img;
           });
       };
 
       for (const f of frames) {
-          const frameData = { ...f };
+          const frameData = { ...f, deckId: slotId };
+          const lookupKey = `${slotId}_${f.pose}`;
+          
+          frameLookupRef.current.set(lookupKey, frameData);
           loadPromises.push(preload(frameData.url, frameData.pose));
 
+          // 1. Sort by Type
           if (f.type === 'closeup') {
               closeups.push(frameData);
-              // MECHANICAL FRAME: Add zoom/impact version for closeup
+              // Machine Frame: Virtual Zoom
               const vPose = f.pose + '_vzoom';
-              closeups.push({ ...frameData, pose: vPose, isVirtual: true, virtualZoom: 1.4, virtualOffsetY: 0.0 });
+              const vLookupKey = `${slotId}_${vPose}`;
+              const vFrame = { 
+                  ...frameData, 
+                  pose: vPose, 
+                  isVirtual: true, 
+                  virtualZoom: 1.5,
+                  virtualOffsetY: 0.0 
+              };
+              frameLookupRef.current.set(vLookupKey, vFrame);
+              virtuals.push(vFrame); 
               loadPromises.push(new Promise<void>(r => { images[vPose] = images[f.pose]; r(); }));
           } 
+          else if (f.type === 'hands') {
+              hands.push(frameData);
+              if (f.pose.includes('mandala')) mandalas.push(frameData); 
+          }
+          else if (f.type === 'feet') feet.push(frameData);
           else {
+              // Body Frames
               if (sorted[f.energy]) sorted[f.energy].push(frameData);
               
-              // MECHANICAL FRAME: Virtual Zoom for High Energy
-              if (f.energy === 'high') {
-                  const vPose = f.pose + '_vzoom';
-                  // Add to 'high' bucket so randomizer picks it up
-                  sorted.high.push({ ...frameData, pose: vPose, isVirtual: true, virtualZoom: 1.6, virtualOffsetY: 0.2 });
-                  // Reuse original image ref
-                  loadPromises.push(new Promise<void>(r => { images[vPose] = images[f.pose]; r(); }));
-              }
-              
-              // MECHANICAL FRAME: Virtual Mid-Shot for Mid Energy
-              if (f.energy === 'mid') {
-                  const vPose = f.pose + '_vmid';
-                  sorted.mid.push({ ...frameData, pose: vPose, isVirtual: true, virtualZoom: 1.25, virtualOffsetY: 0.1 });
-                  loadPromises.push(new Promise<void>(r => { images[vPose] = images[f.pose]; r(); }));
-              }
+              if (f.role === 'alt') acrobatics.push(frameData);
           }
       }
 
-      // Fallbacks to ensure buckets aren't empty
+      // Safety Fill
       if (sorted.low.length === 0 && sorted.mid.length > 0) sorted.low = [...sorted.mid];
       if (sorted.mid.length === 0 && sorted.low.length > 0) sorted.mid = [...sorted.low];
-      if (sorted.high.length === 0 && sorted.mid.length > 0) sorted.high = [...sorted.mid];
 
-      // Wait for images
       await Promise.all(loadPromises);
 
       setDecks(prev => prev.map(d => d.id === slotId ? { 
           ...d, 
-          isActive: true, // Auto-activate on load
+          isActive: true, 
           images, 
           framesByEnergy: sorted, 
-          closeups 
+          closeups, 
+          hands, 
+          feet,
+          mandalas,
+          virtuals,
+          acrobatics
       } : d));
       
       setFrameCount(prev => prev + frames.length);
   }, []);
 
-  // Initialize Default Deck (Slot 0) - RESTORED AUTOMATIC UPDATES
+  // Rig Initialization
   useEffect(() => {
-      // Logic: If state has frames, and Deck 0 is either empty OR has different frames than state (new generation), update it.
-      const currentDeckRigId = decks[0].rig?.id;
-      const stateRigId = 'current_session'; // Synthetic ID for current session
-      
       const hasFrames = state.generatedFrames.length > 0;
       const needsUpdate = hasFrames && (!decks[0].rig || decks[0].rig.frames.length !== state.generatedFrames.length);
 
       if (needsUpdate) {
           const defaultRig: SavedProject = {
-              id: stateRigId,
+              id: 'current_session',
               name: 'Current Session',
               createdAt: Date.now(),
               frames: state.generatedFrames,
               styleId: state.selectedStyleId,
               subjectCategory: state.subjectCategory
           };
-          
-          setDecks(prev => prev.map(d => d.id === 0 ? { ...d, rig: defaultRig } : d));
+          setDecks(prev => prev.map(d => d.id === 0 ? { ...d, rig: defaultRig, isActive: true, mixMode: 'sequencer' } : d));
+          frameLookupRef.current.clear(); 
           processRig(state.generatedFrames, 0).then(() => setImagesReady(true));
       } 
-      else if (state.imagePreviewUrl && !decks[0].rig && !hasFrames) {
-          // Placeholder rig from image if no frames yet
-          const dummyFrame: GeneratedFrame = {
-              url: state.imagePreviewUrl,
-              pose: 'base',
-              energy: 'low',
-              type: 'body',
-              direction: 'center'
-          };
-           const defaultRig: SavedProject = {
-              id: 'preview',
-              name: 'Preview Image',
-              createdAt: Date.now(),
-              frames: [dummyFrame],
-              styleId: state.selectedStyleId,
-              subjectCategory: state.subjectCategory
-          };
-          setDecks(prev => prev.map(d => d.id === 0 ? { ...d, rig: defaultRig } : d));
-          processRig([dummyFrame], 0).then(() => setImagesReady(true));
-      }
-  }, [state.generatedFrames, state.imagePreviewUrl, processRig]); // Removed `decks` from dependency to prevent loop, checking logic inside
+  }, [state.generatedFrames, processRig]);
 
-  // Deck Management Logic
-  const handleDeckToggle = (id: number) => {
-      setDecks(prev => prev.map(d => d.id === id ? { ...d, isActive: !d.isActive } : d));
-  };
-
-  const handleImportRig = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-          try {
-              const project = JSON.parse(ev.target?.result as string) as SavedProject;
-              if (!project.frames) throw new Error("Invalid Rig");
-
-              // Find empty slot
-              const emptySlot = decks.find(d => !d.rig);
-              if (emptySlot) {
-                  setDecks(prev => prev.map(d => d.id === emptySlot.id ? { ...d, rig: project } : d));
-                  processRig(project.frames, emptySlot.id);
-              } else {
-                  // Prompt for replacement
-                  const replacement = confirm("All deck slots are full. Replace the last slot (Slot 4)?");
-                  if(replacement) {
-                       setDecks(prev => prev.map(d => d.id === 3 ? { ...d, rig: project } : d));
-                       processRig(project.frames, 3);
-                  }
-              }
-          } catch (err) {
-              alert("Failed to load rig.");
-          }
-      };
-      reader.readAsText(file);
-      e.target.value = '';
-  };
-  
-  const removeRig = (id: number) => {
-      if (id === 0) return; // Don't remove main
-      setDecks(prev => prev.map(d => d.id === id ? { ...d, rig: null, isActive: false, images: undefined } : d));
-  };
-
-  // 1. Initialize Hologram
+  // Visualizer Init
   useEffect(() => {
     if (bgCanvasRef.current && !hologramRef.current) {
-        try {
-            hologramRef.current = new QuantumVisualizer(bgCanvasRef.current);
-            const style = STYLE_PRESETS.find(s => s.id === state.selectedStyleId);
-            if(style && style.hologramParams) {
-                hologramRef.current.params = {...style.hologramParams};
-            }
-        } catch (e) { console.error("Failed to init hologram:", e); }
+        hologramRef.current = new QuantumVisualizer(bgCanvasRef.current);
     }
     if (containerRef.current && hologramRef.current) {
         const resizeObserver = new ResizeObserver(() => {
@@ -303,662 +241,471 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
         resizeObserver.observe(containerRef.current);
         return () => resizeObserver.disconnect();
     }
-  }, [state.selectedStyleId]);
+  }, []);
 
-  const toggleMic = () => {
-      if (isMicActive) {
-          disconnectMic();
-      } else {
-          setIsPlaying(false);
-          if (audioElementRef.current) audioElementRef.current.pause();
-          connectMicAudio();
-      }
-  };
-
-  // Helper to trigger a Smart Transition
-  const triggerTransition = (newPose: string, mode: InterpMode, speedMultiplier: number = 1.0) => {
-      if (newPose === targetPoseRef.current) return;
-      
+  const triggerTransition = (newPose: string, deckId: number, mode: InterpMode, speedMult: number = 1.0) => {
+      if (newPose === targetPoseRef.current && deckId === currentDeckIdRef.current) return;
       sourcePoseRef.current = targetPoseRef.current;
       targetPoseRef.current = newPose;
+      currentDeckIdRef.current = deckId;
       transitionProgressRef.current = 0.0;
       transitionModeRef.current = mode;
       
       let speed = 20.0;
-      if (mode === 'CUT') speed = 1000.0; // Instant
-      else if (mode === 'MORPH') speed = 5.0; // Fast crossfade
-      else if (mode === 'ZOOM_IN') speed = 6.0; // Rapid Zoom
-      else if (mode === 'SLIDE') speed = 8.0; // Fluid
-      else if (mode === 'SMOOTH') speed = 1.5; // Slow interpolation (Ambient)
-      
-      transitionSpeedRef.current = speed * speedMultiplier;
+      if (mode === 'CUT') speed = 1000.0; 
+      else if (mode === 'MORPH') speed = 5.0; 
+      else if (mode === 'ZOOM_IN') speed = 6.0; 
+      else if (mode === 'SLIDE') speed = 8.0; 
+      else if (mode === 'SMOOTH') speed = 1.5; 
+      transitionSpeedRef.current = speed * speedMult;
   };
 
-  // 3. Animation Loop
+  // --- THE BRAIN LOOP ---
   const loop = useCallback((time: number) => {
     if (!lastFrameTimeRef.current) lastFrameTimeRef.current = time;
     const deltaTime = Math.min((time - lastFrameTimeRef.current) / 1000, 0.1); 
     lastFrameTimeRef.current = time;
-
     requestRef.current = requestAnimationFrame(loop);
-    
-    // --- TRANSITION UPDATE ---
+
     if (transitionProgressRef.current < 1.0) {
         transitionProgressRef.current += transitionSpeedRef.current * deltaTime;
         if (transitionProgressRef.current > 1.0) transitionProgressRef.current = 1.0;
     }
 
-    // Get Audio Data from Hook
-    const { bass, mid, high, energy } = getFrequencyData();
+    const { bass, mid, high, energy } = getAnalysis();
     
-    // --- DYNAMIC CHOREOGRAPHY ANALYSIS ---
-    energyHistoryRef.current.shift();
-    energyHistoryRef.current.push(energy);
-    const avgEnergy = energyHistoryRef.current.reduce((a, b) => a + b, 0) / energyHistoryRef.current.length;
-    const energyTrend = energy - avgEnergy;
+    // SEQUENCER LOGIC: Gather all "Sequencer" decks
+    const seqDecks = decks.filter(d => d.isActive && d.rig && d.mixMode === 'sequencer');
+    const refDeck = seqDecks[0]; // Primary logic driver, but pools are shared
 
-    // --- PHYSICS ---
-    const stiffness = 140;
-    const damping = 8; 
+    // --- PHYSICS SOLVER (Springs) ---
+    const sensitivity = (state.reactivity || 80) / 100;
+    const stiffness = 140; 
+    const damping = 8;
     
-    const targetRotX = bass * 35.0; 
-    const targetRotY = mid * 25.0 * Math.sin(time * 0.005); 
-    const targetRotZ = high * 15.0; 
+    let targetRotX = bass * 35.0 * sensitivity; 
+    let targetRotY = mid * 25.0 * Math.sin(time * 0.005) * sensitivity; 
+    
+    if (sequenceModeRef.current === 'FOOTWORK') {
+        targetRotX += 20; // Look down
+    }
 
-    // Spring Solver
     masterVelXRef.current += ((targetRotX - masterRotXRef.current) * stiffness - (masterVelXRef.current * damping)) * deltaTime;
     masterRotXRef.current += masterVelXRef.current * deltaTime;
-
-    masterVelYRef.current += ((targetRotY - masterRotYRef.current) * (stiffness * 0.5) - (masterVelYRef.current * (damping * 0.8))) * deltaTime;
+    masterVelYRef.current += ((targetRotY - masterRotYRef.current) * stiffness * 0.5 - (masterVelYRef.current * damping * 0.8)) * deltaTime;
     masterRotYRef.current += masterVelYRef.current * deltaTime;
 
-    masterVelZRef.current += ((targetRotZ - masterRotZRef.current) * stiffness - (masterVelZRef.current * damping)) * deltaTime;
-    masterRotZRef.current += masterVelZRef.current * deltaTime;
-
+    // Visualizer Render
     if (hologramRef.current) {
         hologramRef.current.updateAudio({ bass, mid, high, energy });
         const rx = superCamActive ? masterRotXRef.current * 0.3 : 0;
         const ry = superCamActive ? masterRotYRef.current * 0.3 : 0;
-        const rz = superCamActive ? masterRotZRef.current * 0.2 : 0;
-        hologramRef.current.render(0, { x: rx, y: ry, z: rz }); 
+        hologramRef.current.render(0, { x: rx, y: ry, z: 0 }); 
     }
 
     const now = Date.now();
-    const isCloseupLocked = now < closeupLockTimeRef.current;
     
-    // --- STUTTER & SCRATCH ENGINE ---
-    const isStuttering = (mid > 0.6 || high > 0.6) && !isCloseupLocked;
+    // --- STUTTER & GLITCH ENGINE ---
+    if (triggerGlitchRef.current) {
+        rgbSplitRef.current = 1.0;
+        charSkewRef.current = Math.sin(time * 0.05) * 0.5;
+        // Chaos: Random deck, random frame
+        if (Math.random() > 0.8 && seqDecks.length > 0) {
+             const randomDeck = seqDecks[Math.floor(Math.random() * seqDecks.length)];
+             if (randomDeck.framesByEnergy?.high) {
+                const pool = randomDeck.framesByEnergy.high;
+                const frame = pool[Math.floor(Math.random() * pool.length)];
+                triggerTransition(frame.pose, randomDeck.id, 'CUT');
+             }
+        }
+    }
     
-    if (isStuttering && (now - lastStutterTimeRef.current) > 50) { 
-        lastStutterTimeRef.current = now;
+    const stutterThreshold = 1.0 - (fxSettings.stutter.base / 100); 
+    const isStuttering = triggerStutterRef.current || (mid > 0.6 && Math.random() > stutterThreshold);
+
+    if (isStuttering && (now - lastStutterRef.current) > 80 && refDeck) {
+        lastStutterRef.current = now;
+        // Retrigger same frame (Stutter)
+        triggerTransition(targetPoseRef.current, currentDeckIdRef.current, 'CUT'); 
+        charSquashRef.current = 1.2; 
+        rgbSplitRef.current = 0.5;
         
-        if (Math.random() < 0.35) { 
-             const swap = targetPoseRef.current;
-             triggerTransition(sourcePoseRef.current, 'CUT'); 
-             sourcePoseRef.current = swap; 
-             
-             charSkewRef.current = (Math.random() - 0.5) * 2.0; 
-             fluidStutterRef.current = 1.0; 
-             scratchModeRef.current = true;
-             rgbSplitRef.current = 1.0; 
-             masterRotZRef.current += (Math.random() - 0.5) * 10;
+        // Variation
+        if (Math.random() > 0.5) {
+             // Try Mirror or Virtual
+             if (targetPoseRef.current.includes('_mirror')) {
+                 triggerTransition(targetPoseRef.current.replace('_mirror',''), currentDeckIdRef.current, 'CUT');
+             } else {
+                 triggerTransition(targetPoseRef.current + '_mirror', currentDeckIdRef.current, 'CUT');
+             }
+        }
+    }
+    else if ((now - lastBeatTimeRef.current) > 300 && bass > 0.5 && seqDecks.length > 0) {
+        // --- INTELLIGENT SEQUENCER ---
+        lastBeatTimeRef.current = now;
+        barCounterRef.current = (barCounterRef.current + 1) % 16;
+        phraseCounterRef.current = (phraseCounterRef.current + 1) % 8; 
+        
+        const isDrop = bass > 0.8; 
+        const isPeak = high > 0.7; 
+        const isFill = phraseCounterRef.current === 7; 
+
+        if (triggerReverseRef.current) {
+             sequenceModeRef.current = 'GROOVE';
         } else {
-             // USE DECK 0 Frames as reference for energy availability
-             const refDeck = decks.find(d => d.rig) || decks[0];
-             if(refDeck && refDeck.framesByEnergy && refDeck.framesByEnergy.high) {
-                 const pool = [...refDeck.framesByEnergy.high];
-                 if(pool.length > 0) {
-                     const next = pool[Math.floor(Math.random() * pool.length)].pose;
-                     triggerTransition(next, 'CUT', 1.0);
-                 }
-             }
-             scratchModeRef.current = false;
+            // Check global pool capabilities
+            const hasCloseups = seqDecks.some(d => d.closeups && d.closeups.length > 0);
+            const hasHands = seqDecks.some(d => d.hands && d.hands.length > 0);
+            const hasFeet = seqDecks.some(d => d.feet && d.feet.length > 0);
+
+            if (isPeak && hasCloseups) sequenceModeRef.current = 'EMOTE';
+            else if (isDrop && hasHands) sequenceModeRef.current = 'IMPACT';
+            else if (barCounterRef.current >= 12 && hasFeet) sequenceModeRef.current = 'FOOTWORK';
+            else if (isFill) sequenceModeRef.current = 'IMPACT';
+            else sequenceModeRef.current = 'GROOVE';
         }
-    }
+        
+        if (Math.random() * 100 < fxSettings.chaos.base) {
+             sequenceModeRef.current = 'IMPACT';
+        }
 
-    // --- MAIN GROOVE ENGINE ---
-    const beatThreshold = 0.5;
-    
-    if (!scratchModeRef.current && (now - lastBeatTimeRef.current) > 300) {
-        if (bass > beatThreshold) {
-            lastBeatTimeRef.current = now;
-            beatCounterRef.current = (beatCounterRef.current + 1) % 16; 
+        // --- GLOBAL FRAME POOLING ---
+        // Helper to grab frames from ALL sequencer decks
+        const gatherFrames = (selector: (d: DeckSlot) => GeneratedFrame[] | undefined) => {
+            return seqDecks.flatMap(d => {
+                const frames = selector(d) || [];
+                return frames.map(f => ({...f, deckId: d.id})); // Ensure deckID is attached
+            });
+        };
 
-            const beat = beatCounterRef.current;
-            let phase: RhythmPhase = 'WARMUP';
-            if (beat >= 4 && beat < 8) phase = 'SWING_LEFT';
-            else if (beat >= 8 && beat < 12) phase = 'SWING_RIGHT';
-            else if (beat === 12 || beat === 13) phase = 'DROP'; 
-            else if (beat >= 14) phase = 'CHAOS'; 
-            
-            if (phase === 'CHAOS' || phase === 'DROP') {
-                const rand = Math.random();
-                if (rand > 0.7) activeFXModeRef.current = 'INVERT';
-                else if (rand > 0.4) activeFXModeRef.current = 'BW';
-                else activeFXModeRef.current = 'NORMAL';
-            } else {
-                activeFXModeRef.current = 'NORMAL';
-            }
-
-            camZoomRef.current = BASE_ZOOM + (bass * 0.35); 
-            charSquashRef.current = 0.85; 
-            charBounceYRef.current = -50 * bass; 
-            flashIntensityRef.current = 0.8; 
-
-            if (phase === 'SWING_LEFT') { targetTiltRef.current = -8; currentDirectionRef.current = 'left'; }
-            else if (phase === 'SWING_RIGHT') { targetTiltRef.current = 8; currentDirectionRef.current = 'right'; }
-            else if (phase === 'CHAOS') targetTiltRef.current = (Math.random() - 0.5) * 25; 
-            else { targetTiltRef.current = 0; currentDirectionRef.current = 'center'; }
-
-            // USE MAIN DECK FOR DECISION MAKING
-            const refDeck = decks.find(d => d.rig) || decks[0];
-            
-            if (refDeck && refDeck.framesByEnergy && refDeck.closeups) {
-                let pool: GeneratedFrame[] = [];
-                
-                if (isCloseupLocked) {
-                    pool = refDeck.closeups;
+        let pool: GeneratedFrame[] = [];
+        let nextMode: InterpMode = 'CUT';
+        
+        switch (sequenceModeRef.current) {
+            case 'EMOTE':
+                if (isPeak) {
+                     pool = gatherFrames(d => d.virtuals);
+                     if (pool.length === 0) pool = gatherFrames(d => d.closeups);
+                     nextMode = 'CUT';
                 } else {
-                    if (energyTrend > 0.1 && refDeck.framesByEnergy.high.length > 0) {
-                        pool = refDeck.framesByEnergy.high;
-                    } else {
-                        if (phase === 'WARMUP') pool = refDeck.framesByEnergy.low; 
-                        else if (phase === 'SWING_LEFT') {
-                            const leftFrames = refDeck.framesByEnergy.mid.filter(f => f.direction === 'left');
-                            pool = leftFrames.length > 0 ? leftFrames : refDeck.framesByEnergy.mid;
-                        } else if (phase === 'SWING_RIGHT') {
-                            const rightFrames = refDeck.framesByEnergy.mid.filter(f => f.direction === 'right');
-                            pool = rightFrames.length > 0 ? rightFrames : refDeck.framesByEnergy.mid;
-                        } else if (phase === 'DROP') pool = refDeck.framesByEnergy.high;
-                        else if (phase === 'CHAOS') pool = refDeck.framesByEnergy.high;
-                    }
+                     pool = gatherFrames(d => d.closeups);
+                     nextMode = 'MORPH'; 
                 }
-
-                if (pool.length === 0) pool = refDeck.framesByEnergy.mid;
-                if (pool.length === 0) pool = refDeck.framesByEnergy.low;
+                camZoomRef.current = 1.5; 
+                break;
+            case 'FOOTWORK':
+                pool = gatherFrames(d => d.feet);
+                nextMode = 'CUT';
+                break;
+            case 'IMPACT':
+                if (isDrop) pool = gatherFrames(d => d.mandalas);
+                if (pool.length === 0 && isFill) pool = gatherFrames(d => d.acrobatics);
+                if (pool.length === 0) pool = gatherFrames(d => d.hands);
+                if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.high);
+                nextMode = 'CUT';
+                break;
+            case 'GROOVE':
+            default:
+                const dir = barCounterRef.current % 2 === 0 ? 'left' : 'right';
+                pool = gatherFrames(d => d.framesByEnergy?.mid.filter(f => f.direction === dir));
+                if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.mid);
+                if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.low);
                 
-                if (pool.length > 0) {
-                    let nextFrame = pool[Math.floor(Math.random() * pool.length)];
-                    let attempts = 0;
-                    while (nextFrame.pose === targetPoseRef.current && attempts < 3 && phase !== 'CHAOS') {
-                        nextFrame = pool[Math.floor(Math.random() * pool.length)];
-                        attempts++;
-                    }
-                    
-                    let mode: InterpMode = 'CUT'; 
-                    
-                    if (isCloseupLocked || nextFrame.type === 'closeup') {
-                        mode = 'ZOOM_IN'; 
-                    } else if (phase === 'SWING_LEFT' || phase === 'SWING_RIGHT') {
-                        if (high > 0.4) mode = 'SMOOTH';
-                        else mode = 'SLIDE';
-                    } else if (phase === 'DROP') {
-                        mode = 'CUT';
-                    } else if (energyTrend < -0.1) {
-                        mode = 'SMOOTH';
-                    }
-
-                    triggerTransition(nextFrame.pose, mode);
-                }
-            }
-        } 
-        else if (bass < 0.3 && mid < 0.3) {
-             const refDeck = decks.find(d => d.rig) || decks[0];
-             if (Math.random() < 0.02 && refDeck && refDeck.framesByEnergy) {
-                 const pool = refDeck.framesByEnergy.low;
-                 if (pool && pool.length > 0) {
-                     const next = pool[Math.floor(Math.random() * pool.length)];
-                     triggerTransition(next.pose, 'SMOOTH');
-                 }
-                 targetTiltRef.current = 0;
-                 currentDirectionRef.current = 'center';
-             }
+                nextMode = 'CUT';
+                charSquashRef.current = 0.85; 
+                charBounceYRef.current = -50 * bass * sensitivity; 
+                break;
         }
-    }
-    
-    // Vocal Gate logic
-    if(!isCloseupLocked && high > 0.6 && mid > 0.4 && bass < 0.5) {
-        const refDeck = decks.find(d => d.rig) || decks[0];
-        if (refDeck && refDeck.closeups && refDeck.closeups.length > 0 && Math.random() < 0.5) {
-            const next = refDeck.closeups[Math.floor(Math.random() * refDeck.closeups.length)].pose;
-            triggerTransition(next, 'ZOOM_IN', 1.0); 
-            closeupLockTimeRef.current = now + 2500;
+
+        if (pool.length > 0) {
+            const nextFrame = pool[Math.floor(Math.random() * pool.length)];
+            // Pass the specific Deck ID of the chosen frame
+            triggerTransition(nextFrame.pose, nextFrame.deckId || 0, nextMode);
         }
     }
 
-    // Physics Decay
+    // --- PHYSICS DECAY ---
     charSquashRef.current += (1.0 - charSquashRef.current) * (12 * deltaTime);
-    charSkewRef.current += (0.0 - charSkewRef.current) * (10 * deltaTime);
-    fluidStutterRef.current *= Math.exp(-8 * deltaTime); 
-    charTiltRef.current += (targetTiltRef.current - charTiltRef.current) * (6 * deltaTime);
     charBounceYRef.current += (0 - charBounceYRef.current) * (10 * deltaTime); 
+    charSkewRef.current *= 0.9;
+    rgbSplitRef.current *= 0.9;
     
-    rgbSplitRef.current *= Math.exp(-10 * deltaTime); 
-    flashIntensityRef.current *= Math.exp(-15 * deltaTime); 
-
-    const decay = 1 - Math.exp(-5 * deltaTime);
-    camZoomRef.current += (BASE_ZOOM - camZoomRef.current) * decay;
-    ghostAmountRef.current *= Math.exp(-8 * deltaTime); 
+    const targetZoom = sequenceModeRef.current === 'EMOTE' ? 1.5 : BASE_ZOOM;
+    camZoomRef.current += (targetZoom - camZoomRef.current) * (2 * deltaTime);
     
-    let targetPanX = 0;
-    if (currentDirectionRef.current === 'left') targetPanX = 30;
-    else if (currentDirectionRef.current === 'right') targetPanX = -30;
-    camPanXRef.current += (targetPanX - camPanXRef.current) * (4 * deltaTime);
-
-    const rotX = superCamActive ? masterRotXRef.current : 0;
-    const rotY = superCamActive ? masterRotYRef.current : 0;
-    const rotZ = superCamActive ? masterRotZRef.current : 0;
+    const targetPanY = sequenceModeRef.current === 'FOOTWORK' ? -150 : 0; 
+    camPanYRef.current += (targetPanY - camPanYRef.current) * (4 * deltaTime);
     
-    // RENDER FUNCTION
-    const renderCharacterCanvas = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+    // --- RENDERER ---
+    const render = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
         const cx = w/2;
         const cy = h/2;
-        ctx.clearRect(0, 0, w, h);
+        ctx.clearRect(0,0,w,h);
         
-        // --- FX LAYER PROCESSING ---
-        const fxHue = fxSettings.hue.base + (fxSettings.hue.reactive * (high * 2) * 1.8); // 0-180deg
-        const fxAberration = fxSettings.aberration.base + (fxSettings.aberration.reactive * bass);
-        const fxScanlines = fxSettings.scanlines.base + (fxSettings.scanlines.reactive * mid);
+        const fxHue = fxSettings.hue.base + (fxSettings.hue.reactive * high * 2);
+        let filter = '';
+        if (fxHue > 2) filter += `hue-rotate(${fxHue}deg) `;
         
-        let filterString = '';
-        if (activeFXModeRef.current === 'INVERT') filterString += ' invert(1)';
-        else if (activeFXModeRef.current === 'BW') filterString += ' grayscale(1)';
+        const aber = fxSettings.aberration.base + (rgbSplitRef.current * 100);
         
-        if (fxHue > 2) filterString += ` hue-rotate(${fxHue}deg)`;
+        // 1. Draw Main Actor (Sequencer)
+        // Find the deck corresponding to currentDeckIdRef
+        const mainDeck = decks.find(d => d.id === currentDeckIdRef.current);
         
-        if (filterString === '') ctx.filter = 'none';
-        else ctx.filter = filterString.trim();
+        const drawFrame = (deck: DeckSlot, pose: string, opacity: number) => {
+             if (!deck || !deck.images) return;
+             const img = deck.images[pose];
+             if (!img) return;
 
-        // --- MULTI DECK RENDERING ---
-        // We render active decks from 0 to 3
-        decks.forEach(deck => {
-            if (!deck.isActive || !deck.images) return;
+             const lookupKey = `${deck.id}_${pose}`;
+             const frameData = frameLookupRef.current.get(lookupKey);
+             const extraScale = frameData?.virtualZoom || 1.0;
+             const offsetY = frameData?.virtualOffsetY || 0.0;
 
-            const drawLayer = (pose: string, opacity: number, blurAmount: number, skewOffset: number, extraScale: number = 1.0) => {
-                // Find frame data in this deck (fallback to matching pose name)
-                let frame = deck.framesByEnergy?.low.find(f => f.pose === pose) 
-                         || deck.framesByEnergy?.mid.find(f => f.pose === pose)
-                         || deck.framesByEnergy?.high.find(f => f.pose === pose)
-                         || deck.closeups?.find(f => f.pose === pose);
-                
-                // Fallback: If not found (e.g. pose is 'base_vzoom' but only 'base' exists in this deck), try stripping suffix
-                if (!frame && pose.includes('_v')) {
-                    const rootPose = pose.split('_v')[0];
-                    frame = deck.framesByEnergy?.low.find(f => f.pose === rootPose) 
-                         || deck.framesByEnergy?.mid.find(f => f.pose === rootPose)
-                         || deck.framesByEnergy?.high.find(f => f.pose === rootPose)
-                         || deck.closeups?.find(f => f.pose === rootPose);
-                }
+             const aspect = img.width / img.height;
+             let dw = w; let dh = w / aspect;
+             if (dh > h) { dh = h; dw = dh * aspect; }
+             
+             ctx.save();
+             ctx.translate(cx + camPanXRef.current, cy + charBounceYRef.current + camPanYRef.current + offsetY);
+             const radY = (superCamActive ? masterRotYRef.current : 0) * Math.PI / 180;
+             const scaleX = Math.cos(radY); 
+             ctx.transform(1, 0, charSkewRef.current, 1, 0, 0);
+             ctx.scale(Math.abs(scaleX), 1);
+             ctx.scale(1/charSquashRef.current, charSquashRef.current);
+             ctx.scale(camZoomRef.current * extraScale, camZoomRef.current * extraScale);
+             ctx.globalAlpha = opacity * deck.opacity;
+             if(filter) ctx.filter = filter;
+             
+             if (aber > 5) {
+                 ctx.globalCompositeOperation = 'screen';
+                 ctx.fillStyle = 'red'; 
+                 ctx.drawImage(img, -dw/2 - (aber * 0.2), -dh/2, dw, dh);
+                 ctx.globalCompositeOperation = 'screen';
+                 ctx.drawImage(img, -dw/2 + (aber * 0.2), -dh/2, dw, dh);
+                 ctx.globalCompositeOperation = 'source-over';
+             } else {
+                 ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
+             }
+             ctx.restore();
+        };
 
-                // If still no frame, verify if we at least have an image
-                const img = deck.images![pose] || (pose.includes('_v') ? deck.images![pose.split('_v')[0]] : null);
-                if (!img || !img.complete || img.naturalWidth === 0) return;
-                
-                const aspect = img.width / img.height;
-                let dw = w;
-                let dh = w / aspect;
-                
-                if (dh > h) { dh = h; dw = dh * aspect; } 
-                
-                const renderFrame = (image: HTMLImageElement, zoom: number, alpha: number, composite: GlobalCompositeOperation = 'source-over', offsetY: number = 0, colorChannel: 'all'|'r'|'b' = 'all') => {
-                    ctx.save();
-                    ctx.translate(cx + camPanXRef.current, cy + charBounceYRef.current); 
-                    
-                    if (colorChannel === 'r') ctx.translate(-10 * (rgbSplitRef.current + fxAberration * 0.1), 0);
-                    if (colorChannel === 'b') ctx.translate(10 * (rgbSplitRef.current + fxAberration * 0.1), 0);
-
-                    const radX = (rotX * Math.PI) / 180;
-                    const radY = (rotY * Math.PI) / 180;
-                    const scaleX = Math.cos(radY); 
-                    const scaleY = Math.cos(radX); 
-                    
-                    const tiltZ = (rotZ * 0.8) * (Math.PI/180);
-                    ctx.rotate(tiltZ + (charTiltRef.current * Math.PI / 180));
-                    ctx.scale(Math.abs(scaleX), Math.abs(scaleY));
-                    ctx.scale(1/charSquashRef.current, charSquashRef.current); 
-                    
-                    if (skewOffset !== 0) ctx.transform(1, 0, skewOffset, 1, 0, 0);
-                    if (charSkewRef.current !== 0) ctx.transform(1, 0, charSkewRef.current * 0.2, 1, 0, 0);
-
-                    ctx.scale(zoom * extraScale, zoom * extraScale);
-                    ctx.translate(0, offsetY * dh); 
-                    
-                    if (blurAmount > 0) {
-                         const currentFilter = ctx.filter === 'none' ? '' : ctx.filter;
-                         ctx.filter = `${currentFilter} blur(${blurAmount}px)`;
-                    }
-
-                    ctx.globalAlpha = alpha * deck.opacity;
-                    ctx.globalCompositeOperation = composite;
-                    
-                    if (colorChannel !== 'all') {
-                         ctx.globalAlpha = alpha * deck.opacity * 0.7;
-                         if(colorChannel === 'r') ctx.filter = 'hue-rotate(90deg)'; 
-                         if(colorChannel === 'b') ctx.filter = 'hue-rotate(-90deg)';
-                    }
-
-                    try {
-                        ctx.drawImage(image, -dw/2, -dh/2, dw, dh);
-                    } catch (e) {}
-                    ctx.restore();
-                };
-
-                let effectiveZoom = camZoomRef.current;
-                let effectiveOffsetY = 0;
-                
-                if (frame && frame.isVirtual && frame.virtualZoom) {
-                    effectiveZoom *= frame.virtualZoom;
-                    effectiveOffsetY = frame.virtualOffsetY || 0;
-                }
-                
-                const totalAberration = rgbSplitRef.current + (fxAberration * 0.05);
-                
-                if (totalAberration > 0.05) {
-                    renderFrame(img, effectiveZoom, opacity * 0.8, 'screen', effectiveOffsetY, 'r');
-                    renderFrame(img, effectiveZoom, opacity * 0.8, 'screen', effectiveOffsetY, 'b');
-                    renderFrame(img, effectiveZoom, opacity, 'multiply', effectiveOffsetY, 'all'); 
-                } else {
-                    renderFrame(img, effectiveZoom, opacity, 'source-over', effectiveOffsetY);
-                }
-            };
-
+        if (mainDeck && mainDeck.isActive) {
             const progress = transitionProgressRef.current;
-            const mode = transitionModeRef.current;
-            
-            if (progress >= 1.0 || mode === 'CUT') {
-                drawLayer(targetPoseRef.current, 1.0, 0, 0);
+            if (progress >= 1.0 || transitionModeRef.current === 'CUT') {
+                drawFrame(mainDeck, targetPoseRef.current, 1.0);
             } else {
-                const easeT = progress * progress * (3 - 2 * progress); 
-                
-                if (mode === 'ZOOM_IN') {
-                     const zoomFactor = 1.0 + (easeT * 0.5); 
-                     drawLayer(sourcePoseRef.current, 1.0 - easeT, easeT * 10, 0, zoomFactor);
-                     drawLayer(targetPoseRef.current, easeT, 0, 0);
-                } else if (mode === 'SLIDE') {
-                    const dirMultiplier = targetPoseRef.current.includes('right') ? -1 : 1;
-                    drawLayer(sourcePoseRef.current, 1.0 - easeT, 0, easeT * 0.5 * dirMultiplier);
-                    drawLayer(targetPoseRef.current, easeT, 0, (1.0 - easeT) * -0.5 * dirMultiplier);
-                } else if (mode === 'SMOOTH' || mode === 'MORPH') {
-                    drawLayer(sourcePoseRef.current, 1.0 - easeT, 0, 0);
-                    drawLayer(targetPoseRef.current, easeT, 0, 0); 
-                }
+                 if (transitionModeRef.current === 'MORPH') {
+                     drawFrame(mainDeck, sourcePoseRef.current, 1.0 - progress);
+                     drawFrame(mainDeck, targetPoseRef.current, progress);
+                 } else {
+                     drawFrame(mainDeck, targetPoseRef.current, 1.0);
+                 }
             }
-        }); // End Deck Loop
-            
-        // Scanlines FX
-        const totalScanlines = fxScanlines + (mid * 0.3); // Mix manual + auto beat
-        if (totalScanlines > 0.1) {
-            ctx.save();
-            ctx.fillStyle = `rgba(0,0,0, ${totalScanlines * 0.4})`;
-            const step = Math.max(2, Math.floor(10 - totalScanlines * 8));
-            for(let y=0; y<h; y+=step) {
-                 ctx.fillRect(0, y, w, step/2);
-            }
-            ctx.restore();
         }
+
+        // 2. Draw Layer Decks (Overlays)
+        decks.filter(d => d.isActive && d.mixMode === 'layer').forEach(layerDeck => {
+             // For layers, we might just loop their own sequence or sync to main?
+             // Simplest: Sync to main pose if it exists, otherwise idle
+             if (!layerDeck.images) return;
+             // Check if layer deck has the target pose, else fallback
+             let layerPose = targetPoseRef.current;
+             if (!layerDeck.images[layerPose]) layerPose = Object.keys(layerDeck.images)[0]; 
+             drawFrame(layerDeck, layerPose, 1.0);
+        });
         
-        if (flashIntensityRef.current > 0.01) {
-            ctx.fillStyle = `rgba(255,255,255, ${flashIntensityRef.current})`;
-            ctx.fillRect(0,0,w,h);
+        const scans = fxSettings.scanlines.base + (mid * 0.3);
+        if (scans > 0.1) {
+            ctx.fillStyle = `rgba(0,0,0,${scans * 0.4})`;
+            for(let y=0; y<h; y+=4) ctx.fillRect(0, y, w, 2);
         }
     };
 
     if (charCanvasRef.current && imagesReady) {
-        const ctx = charCanvasRef.current.getContext('2d');
-        if (ctx) renderCharacterCanvas(ctx, charCanvasRef.current.width, charCanvasRef.current.height);
+        render(charCanvasRef.current.getContext('2d')!, charCanvasRef.current.width, charCanvasRef.current.height);
     }
     
-    // Recording Renderer
-    if (isRecording && recordCanvasRef.current && bgCanvasRef.current) {
-        const ctx = recordCanvasRef.current.getContext('2d');
-        if (ctx) {
-            const w = recordCanvasRef.current.width;
-            const h = recordCanvasRef.current.height;
-            const bgAspect = bgCanvasRef.current.width / bgCanvasRef.current.height;
-            let bgW = w;
-            let bgH = w / bgAspect;
-            if (bgH < h) { bgH = h; bgW = bgH * bgAspect; }
-            
-            ctx.drawImage(bgCanvasRef.current, (w-bgW)/2, (h-bgH)/2, bgW, bgH);
-            renderCharacterCanvas(ctx, w, h);
-        }
+    if (isRecording && recordCanvasRef.current) {
+         const ctx = recordCanvasRef.current.getContext('2d')!;
+         if (bgCanvasRef.current) ctx.drawImage(bgCanvasRef.current, 0, 0, recordCanvasRef.current.width, recordCanvasRef.current.height);
+         render(ctx, recordCanvasRef.current.width, recordCanvasRef.current.height);
     }
     
-    setBrainState({
-        activePoseName: targetPoseRef.current,
-        fps: Math.round(1/deltaTime)
-    });
+    setBrainState({ activePoseName: targetPoseRef.current, fps: Math.round(1/deltaTime), mode: sequenceModeRef.current });
 
-  }, [imagesReady, superCamActive, isRecording, getFrequencyData, decks, fxSettings]); 
-
+  }, [imagesReady, superCamActive, isRecording, getAnalysis, decks, fxSettings, state.reactivity]); 
 
   useEffect(() => {
-    if (imagesReady) {
-        requestRef.current = requestAnimationFrame(loop);
-    }
+    if (imagesReady) requestRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(requestRef.current);
   }, [loop, imagesReady]);
 
-  // Audio Playback Handling
-  useEffect(() => {
-      if(audioElementRef.current && isPlaying) {
-          connectFileAudio(audioElementRef.current);
-          audioElementRef.current.play();
-      } else if(audioElementRef.current) {
-          audioElementRef.current.pause();
-      }
-  }, [isPlaying, connectFileAudio]);
-
-
-  const handleExportWidget = () => {
-      if(!hologramRef.current) return;
-      // We pass the currently loaded rigs into the exported player
-      // We map our DeckSlot structure to a simpler array for export
-      const exportDecks = decks.map(d => ({
-          id: d.id,
-          rig: d.rig,
-          isActive: d.isActive
-      }));
-      
-      const html = generatePlayerHTML(exportDecks, hologramRef.current.params, state.subjectCategory);
-      const blob = new Blob([html], {type: 'text/html'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `jusdnce_rig_${Date.now()}.html`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-  };
-
+  // --- RECORDING & EXPORT ---
   const startRecording = () => {
-      if (!recordCanvasRef.current) return;
+      if (!recordCanvasRef.current || !audioDestNode) return;
       
-      let w = 1080;
-      let h = 1920;
+      const w = 1080; const h = 1920; 
+      recordCanvasRef.current.width = w; recordCanvasRef.current.height = h;
       
-      const resMult = exportRes === '4K' ? 2 : (exportRes === '720p' ? 0.66 : 1);
-      const baseDim = 1080 * resMult;
-      
-      if (exportRatio === '9:16') { w = baseDim; h = baseDim * (16/9); }
-      else if (exportRatio === '16:9') { w = baseDim * (16/9); h = baseDim; }
-      else if (exportRatio === '1:1') { w = baseDim; h = baseDim; }
-      
-      recordCanvasRef.current.width = Math.floor(w);
-      recordCanvasRef.current.height = Math.floor(h);
-
       const stream = recordCanvasRef.current.captureStream(60);
       
-      if (audioDestRef.current) {
-          const audioTracks = audioDestRef.current.stream.getAudioTracks();
-          if (audioTracks.length > 0) {
-              stream.addTrack(audioTracks[0]);
-          }
+      // CRITICAL: Add Audio Track
+      const audioTracks = audioDestNode.stream.getAudioTracks();
+      if (audioTracks.length > 0) {
+          stream.addTrack(audioTracks[0]); 
+      } else {
+          console.warn("No audio tracks found on destination node");
       }
 
       const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 8000000 });
       mediaRecorderRef.current = recorder;
       recordedChunksRef.current = [];
       
-      recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) recordedChunksRef.current.push(e.data);
-      };
-      
+      recorder.ondataavailable = e => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
       recorder.onstop = () => {
           const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
           const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `jusdnce_${exportRatio.replace(':','x')}_${Date.now()}.webm`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+          const a = document.createElement('a'); a.href = url; a.download = `jusdnce_${Date.now()}.webm`;
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
       };
       
       recorder.start();
       setIsRecording(true);
-      setShowExportMenu(false); 
-      
       const startTime = Date.now();
-      const interval = setInterval(() => {
-          setRecordingTime(Date.now() - startTime);
-      }, 100);
+      const interval = setInterval(() => setRecordingTime(Date.now() - startTime), 100);
       (mediaRecorderRef.current as any).timerInterval = interval;
   };
-
+  
   const stopRecording = () => {
-      if (mediaRecorderRef.current && isRecording) {
+      if (mediaRecorderRef.current) {
           mediaRecorderRef.current.stop();
           clearInterval((mediaRecorderRef.current as any).timerInterval);
           setIsRecording(false);
-          setRecordingTime(0);
       }
   };
 
+  const handleExportPlayer = () => {
+      if(!hologramRef.current) return;
+      const exportDecks = decks.map(d => ({ id: d.id, rig: d.rig, isActive: d.isActive, mixMode: d.mixMode }));
+      const html = generatePlayerHTML(exportDecks, hologramRef.current.params, state.subjectCategory);
+      const blob = new Blob([html], {type: 'text/html'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `jusdnce_player.html`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  };
+  
+  const handleDeckToggle = (id: number) => {
+      setDecks(prev => prev.map(d => d.id === id ? { ...d, isActive: !d.isActive } : d));
+  };
+
+  const toggleDeckMode = (id: number) => {
+      setDecks(prev => prev.map(d => d.id === id ? { 
+          ...d, 
+          mixMode: d.mixMode === 'sequencer' ? 'layer' : 'sequencer' 
+      } : d));
+  };
+
+  const handleImportRig = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+          try {
+              const project = JSON.parse(ev.target?.result as string) as SavedProject;
+              if (!project.frames) throw new Error("Invalid Rig");
+              const emptySlot = decks.find(d => !d.rig);
+              if (emptySlot) {
+                  setDecks(prev => prev.map(d => d.id === emptySlot.id ? { ...d, rig: project, isActive: true, mixMode: 'sequencer' } : d));
+                  frameLookupRef.current.clear();
+                  // Re-process ALL decks to rebuild lookup
+                  // Note: In a real app we'd optimize this, but here we just process the new one and rely on deckId separation
+                  processRig(project.frames, emptySlot.id);
+              } else {
+                   setDecks(prev => prev.map(d => d.id === 3 ? { ...d, rig: project, isActive: true, mixMode: 'sequencer' } : d));
+                   processRig(project.frames, 3);
+              }
+          } catch (err) { alert("Failed to load rig."); }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+  };
+  
+  const removeRig = (id: number) => {
+      if (id === 0) return; 
+      setDecks(prev => prev.map(d => d.id === id ? { ...d, rig: null, isActive: false, images: undefined } : d));
+  };
+  
+  const getFrameIcon = (frame: GeneratedFrame) => {
+      if (frame.pose.includes('mandala')) return '💠';
+      if (frame.pose.includes('mirror')) return '🪞';
+      if (frame.isVirtual) return '🔮';
+      if (frame.type === 'closeup') return '👁️';
+      if (frame.type === 'hands') return '✋';
+      return null;
+  };
 
   return (
     <div ref={containerRef} className="relative w-full h-full flex items-center justify-center overflow-hidden bg-black/90">
-      
       <canvas ref={recordCanvasRef} className="hidden pointer-events-none fixed -top-[9999px]" />
-
-      <div className="absolute inset-0 w-full h-full overflow-hidden flex items-center justify-center perspective-1000">
-           <canvas 
-              ref={bgCanvasRef} 
-              className="absolute inset-0 w-full h-full object-cover opacity-80 transition-transform duration-75 ease-linear will-change-transform" 
-           />
-           <canvas 
-              ref={charCanvasRef} 
-              className="absolute inset-0 w-full h-full object-contain z-10 transition-transform duration-75 ease-linear will-change-transform" 
-           />
+      <div className="absolute inset-0 w-full h-full flex items-center justify-center perspective-1000">
+           <canvas ref={bgCanvasRef} className="absolute inset-0 w-full h-full object-cover opacity-80" />
+           <canvas ref={charCanvasRef} className="absolute inset-0 w-full h-full object-contain z-10" />
       </div>
-
-      {showExportMenu && (
-          <div className="absolute inset-0 z-[60] bg-black/80 backdrop-blur-md flex items-center justify-center animate-fade-in p-6">
-              <div className="bg-dark-surface border border-brand-500/30 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-zoom-out relative">
-                  <button onClick={() => setShowExportMenu(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white"><X size={20} /></button>
-                  <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><FileVideo className="text-brand-400" /> EXPORT SETTINGS</h3>
-                  <div className="space-y-6">
-                      <div>
-                          <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-3">Aspect Ratio</label>
-                          <div className="grid grid-cols-3 gap-3">
-                              {[{ id: '9:16', icon: Smartphone, label: 'Story' }, { id: '1:1', icon: Square, label: 'Post' }, { id: '16:9', icon: Monitor, label: 'Cinema' }].map((opt) => (
-                                  <button key={opt.id} onClick={() => setExportRatio(opt.id as AspectRatio)} className={`flex flex-col items-center justify-center gap-2 p-3 rounded-xl border transition-all ${exportRatio === opt.id ? 'bg-brand-600 border-brand-400 text-white shadow-lg' : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'}`}>
-                                      <opt.icon size={20} /> <span className="text-xs font-bold">{opt.label}</span>
-                                  </button>
-                              ))}
-                          </div>
-                      </div>
-                      <div>
-                          <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-3">Resolution</label>
-                          <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
-                              {['720p', '1080p', '4K'].map((res) => (
-                                  <button key={res} onClick={() => setExportRes(res as Resolution)} className={`flex-1 py-2 rounded-md text-xs font-bold transition-all ${exportRes === res ? 'bg-brand-500 text-white shadow-md' : 'text-gray-500 hover:text-white'}`}>{res}</button>
-                              ))}
-                          </div>
-                      </div>
-                      <button onClick={startRecording} className="w-full py-4 bg-red-600 hover:bg-red-500 text-white font-black tracking-widest rounded-xl flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all hover:scale-[1.02]"><CircleDot size={20} /> START RECORDING</button>
-                  </div>
-              </div>
-          </div>
-      )}
 
       {!imagesReady && !state.isGenerating && (
          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-50 backdrop-blur-md">
              <Loader2 size={48} className="text-brand-500 animate-spin mb-4" />
-             <p className="text-white font-mono tracking-widest animate-pulse">NEURAL RIG INITIALIZING...</p>
-             <p className="text-gray-500 text-xs mt-2">Loading {frameCount} frames</p>
+             <p className="text-white font-mono tracking-widest animate-pulse">KINETIC RIG INITIALIZING...</p>
+             <p className="text-gray-500 text-xs mt-2">Loading {frameCount} mechanical frames</p>
          </div>
       )}
-      
-      {state.isGenerating && (
-          <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none animate-in slide-in-from-top-4 fade-in">
-             <div className="bg-black/80 border border-brand-500/50 px-6 py-3 rounded-full flex items-center gap-4 shadow-[0_0_30px_rgba(139,92,246,0.3)] backdrop-blur-md">
-                  <div className="relative w-5 h-5">
-                      <div className="w-5 h-5 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-                  </div>
-                  <div className="flex flex-col">
-                      <span className="text-xs font-bold text-white tracking-widest">EXPANDING REALITY</span>
-                      <span className="text-[10px] text-brand-300 font-mono">Generating variations...</span>
-                  </div>
-             </div>
-          </div>
-      )}
 
-      {state.audioPreviewUrl && (
-          <audio ref={audioElementRef} src={state.audioPreviewUrl} loop crossOrigin="anonymous" onEnded={() => setIsPlaying(false)} />
-      )}
-      
-      {/* FX CONTROL PANEL */}
+      {/* FX RACK */}
       {showFX && (
          <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-40 p-4 animate-slide-in-right w-full max-w-lg">
              <div className="bg-black/80 backdrop-blur-lg border-t border-white/10 p-5 rounded-xl">
                  <div className="flex justify-between items-center mb-5">
-                     <h4 className="text-white font-bold text-xs tracking-widest flex items-center gap-2"><Zap size={14}/> FX RACK</h4>
+                     <h4 className="text-white font-bold text-xs tracking-widest flex items-center gap-2"><Zap size={14}/> FX RACK & MOTION</h4>
                      <button onClick={() => setShowFX(false)} className="text-gray-400 hover:text-white"><X size={14} /></button>
                  </div>
-                 
-                 <div className="space-y-6">
-                     {/* HUE SHIFT */}
-                     <div className="space-y-2">
-                         <div className="flex justify-between text-[10px] font-bold text-gray-400">
-                             <span>HUE SHIFT</span>
-                             <span className="text-brand-400">REACTIVITY: {fxSettings.hue.reactive}%</span>
+                 <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                         <h5 className="text-[10px] text-brand-300 font-bold border-b border-white/10 pb-1">VISUALS</h5>
+                         {['hue', 'aberration', 'scanlines'].map(fx => (
+                             <div key={fx} className="space-y-1">
+                                 <div className="flex justify-between text-[10px] font-bold text-gray-400 uppercase"><span>{fx}</span></div>
+                                 <input type="range" min="0" max="100" 
+                                    value={(fxSettings as any)[fx].reactive} 
+                                    onChange={e => setFxSettings(p => ({...p, [fx]: {...(p as any)[fx], reactive: Number(e.target.value)}}))} 
+                                    className="w-full h-1 bg-white/10 rounded-full accent-brand-500" />
+                             </div>
+                         ))}
+                    </div>
+                    <div className="space-y-4">
+                         <h5 className="text-[10px] text-brand-300 font-bold border-b border-white/10 pb-1">MOTION TRICKS</h5>
+                         <div className="space-y-1">
+                             <div className="flex justify-between text-[10px] font-bold text-gray-400 uppercase"><span>STUTTER</span></div>
+                             <input type="range" min="0" max="100" 
+                                value={fxSettings.stutter.base} 
+                                onChange={e => setFxSettings(p => ({...p, stutter: {...p.stutter, base: Number(e.target.value)}}))} 
+                                className="w-full h-1 bg-white/10 rounded-full accent-yellow-500" />
                          </div>
-                         <div className="flex gap-4 items-center">
-                             <input type="range" min="0" max="360" value={fxSettings.hue.base} onChange={e => setFxSettings(p => ({...p, hue: {...p.hue, base: Number(e.target.value)}}))} className="flex-1 h-1 bg-white/10 rounded-full accent-white" />
-                             <input type="range" min="0" max="100" value={fxSettings.hue.reactive} onChange={e => setFxSettings(p => ({...p, hue: {...p.hue, reactive: Number(e.target.value)}}))} className="w-24 h-1 bg-white/10 rounded-full accent-brand-500" />
+                         <div className="space-y-1">
+                             <div className="flex justify-between text-[10px] font-bold text-gray-400 uppercase"><span>CHAOS (RANDOM)</span></div>
+                             <input type="range" min="0" max="100" 
+                                value={fxSettings.chaos.base} 
+                                onChange={e => setFxSettings(p => ({...p, chaos: {...p.chaos, base: Number(e.target.value)}}))} 
+                                className="w-full h-1 bg-white/10 rounded-full accent-red-500" />
                          </div>
-                     </div>
-
-                     {/* CHROMATIC ABERRATION */}
-                     <div className="space-y-2">
-                         <div className="flex justify-between text-[10px] font-bold text-gray-400">
-                             <span>ABERRATION</span>
-                             <span className="text-brand-400">REACTIVITY: {fxSettings.aberration.reactive}%</span>
-                         </div>
-                         <div className="flex gap-4 items-center">
-                             <input type="range" min="0" max="100" value={fxSettings.aberration.base} onChange={e => setFxSettings(p => ({...p, aberration: {...p.aberration, base: Number(e.target.value)}}))} className="flex-1 h-1 bg-white/10 rounded-full accent-white" />
-                             <input type="range" min="0" max="100" value={fxSettings.aberration.reactive} onChange={e => setFxSettings(p => ({...p, aberration: {...p.aberration, reactive: Number(e.target.value)}}))} className="w-24 h-1 bg-white/10 rounded-full accent-brand-500" />
-                         </div>
-                     </div>
-
-                     {/* SCANLINES */}
-                     <div className="space-y-2">
-                         <div className="flex justify-between text-[10px] font-bold text-gray-400">
-                             <span>SCANLINES</span>
-                             <span className="text-brand-400">REACTIVITY: {fxSettings.scanlines.reactive}%</span>
-                         </div>
-                         <div className="flex gap-4 items-center">
-                             <input type="range" min="0" max="100" value={fxSettings.scanlines.base} onChange={e => setFxSettings(p => ({...p, scanlines: {...p.scanlines, base: Number(e.target.value)}}))} className="flex-1 h-1 bg-white/10 rounded-full accent-white" />
-                             <input type="range" min="0" max="100" value={fxSettings.scanlines.reactive} onChange={e => setFxSettings(p => ({...p, scanlines: {...p.scanlines, reactive: Number(e.target.value)}}))} className="w-24 h-1 bg-white/10 rounded-full accent-brand-500" />
-                         </div>
-                     </div>
+                    </div>
                  </div>
              </div>
          </div>
       )}
-
-      {/* NEURAL DECK / MULTI-CHANNEL MIXER */}
+      
+      {/* NEURAL MIXER */}
       {showDeck && (
          <div className="absolute bottom-24 left-0 right-0 z-40 p-4 animate-slide-in-right">
              <div className="bg-black/80 backdrop-blur-lg border-t border-white/10 p-4 rounded-xl max-w-4xl mx-auto">
@@ -970,27 +717,39 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
                  
                  <div className="grid grid-cols-4 gap-4">
                      {decks.map((deck) => (
-                         <div key={deck.id} className={`relative p-2 rounded-lg border transition-all ${deck.isActive ? 'border-brand-500 bg-brand-900/20' : 'border-white/10 bg-black/40'} ${!deck.rig ? 'opacity-50 border-dashed' : ''}`}>
-                             <div className="aspect-square bg-black/50 rounded overflow-hidden mb-2 relative group">
+                         <div key={deck.id} className={`relative p-2 rounded-lg border transition-all flex flex-col ${deck.isActive ? 'border-brand-500 bg-brand-900/20' : 'border-white/10 bg-black/40'} ${!deck.rig ? 'opacity-50 border-dashed' : ''}`}>
+                             <div className="aspect-square bg-black/50 rounded overflow-hidden mb-2 relative group flex-shrink-0">
                                  {deck.rig ? (
                                      <img src={deck.rig.frames[0].url} className="w-full h-full object-contain" />
                                  ) : (
                                      <div className="w-full h-full flex items-center justify-center text-white/20 font-mono text-xs">EMPTY</div>
                                  )}
-                                 {deck.rig && (
+                                 {deck.rig && deck.id !== 0 && (
                                      <button onClick={(e) => { e.stopPropagation(); removeRig(deck.id); }} className="absolute top-1 right-1 bg-red-500/80 p-1 rounded text-white opacity-0 group-hover:opacity-100 transition-opacity">
                                          <Trash2 size={12} />
                                      </button>
                                  )}
                              </div>
                              
-                             <div className="flex justify-between items-center">
+                             <div className="flex justify-between items-center mb-2">
                                  <span className="text-[10px] text-gray-400 font-mono">CH {deck.id + 1}</span>
-                                 <button 
-                                    disabled={!deck.rig}
-                                    onClick={() => handleDeckToggle(deck.id)}
-                                    className={`w-3 h-3 rounded-full border ${deck.isActive ? 'bg-green-500 border-green-400 shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-black border-white/30'}`}
-                                 />
+                                 <div className="flex items-center gap-2">
+                                     {/* MIX MODE TOGGLE */}
+                                     <button
+                                        onClick={() => toggleDeckMode(deck.id)}
+                                        title={deck.mixMode === 'sequencer' ? "Pooled (Sequencer)" : "Overlay (Layer)"}
+                                        disabled={!deck.rig}
+                                        className={`p-1 rounded ${deck.mixMode === 'sequencer' ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'}`}
+                                     >
+                                         {deck.mixMode === 'sequencer' ? <Shuffle size={10} /> : <Merge size={10} />}
+                                     </button>
+
+                                     <button 
+                                        disabled={!deck.rig}
+                                        onClick={() => handleDeckToggle(deck.id)}
+                                        className={`w-3 h-3 rounded-full border ${deck.isActive ? 'bg-green-500 border-green-400 shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-black border-white/30'}`}
+                                     />
+                                 </div>
                              </div>
                          </div>
                      ))}
@@ -999,53 +758,67 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
          </div>
       )}
       
-      {/* TOOLTIP */}
-      {hoveredFrame && (
-          <div className="absolute bottom-52 left-1/2 -translate-x-1/2 z-50 bg-brand-900/90 border border-brand-500/50 p-4 rounded-xl shadow-[0_0_30px_rgba(139,92,246,0.5)] backdrop-blur-xl animate-fade-in flex items-center gap-4">
-               <img src={hoveredFrame.url} className="w-16 h-16 object-contain bg-black/50 rounded-lg" />
-               <div>
-                   <div className="text-xs font-bold text-brand-300 tracking-widest uppercase">FRAME DATA</div>
-                   <div className="text-white font-mono text-sm">POSE: {hoveredFrame.pose}</div>
-                   <div className="text-white font-mono text-sm">ENERGY: {hoveredFrame.energy}</div>
-                   <div className="text-white font-mono text-sm">TYPE: {hoveredFrame.type}</div>
-               </div>
-          </div>
+      {/* PERFORMANCE PADS */}
+      {!showDeck && !showFX && (
+         <div className="absolute bottom-24 left-0 right-0 z-40 p-4 flex justify-center gap-2 animate-slide-in-right">
+             <button 
+                onMouseDown={() => triggerStutterRef.current = true} 
+                onMouseUp={() => triggerStutterRef.current = false}
+                onTouchStart={() => triggerStutterRef.current = true}
+                onTouchEnd={() => triggerStutterRef.current = false}
+                className="bg-yellow-500/20 border border-yellow-500/50 text-yellow-300 px-4 py-3 rounded-xl font-black text-xs active:bg-yellow-500 active:text-black hover:scale-105 transition-all"
+             >
+                 STUTTER
+             </button>
+             <button 
+                onMouseDown={() => triggerReverseRef.current = true} 
+                onMouseUp={() => triggerReverseRef.current = false}
+                onTouchStart={() => triggerReverseRef.current = true}
+                onTouchEnd={() => triggerReverseRef.current = false}
+                className="bg-blue-500/20 border border-blue-500/50 text-blue-300 px-4 py-3 rounded-xl font-black text-xs active:bg-blue-500 active:text-white hover:scale-105 transition-all"
+             >
+                 <RotateCcw size={16} />
+             </button>
+             <button 
+                onMouseDown={() => triggerGlitchRef.current = true} 
+                onMouseUp={() => triggerGlitchRef.current = false}
+                onTouchStart={() => triggerGlitchRef.current = true}
+                onTouchEnd={() => triggerGlitchRef.current = false}
+                className="bg-red-500/20 border border-red-500/50 text-red-300 px-4 py-3 rounded-xl font-black text-xs active:bg-red-500 active:text-white hover:scale-105 transition-all"
+             >
+                 GLITCH
+             </button>
+         </div>
       )}
-
+      
+      {/* HUD */}
       <div className="absolute inset-0 pointer-events-none z-30 p-6 flex flex-col justify-between">
           <div className="flex justify-between items-start">
              <div className="bg-black/40 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto">
-                 <div className="flex items-center gap-2 mb-1"><Activity size={14} className="text-brand-400" /><span className="text-[10px] font-bold text-gray-300 tracking-widest">NEURAL STATUS</span></div>
-                 <div className="font-mono text-xs text-brand-300">FPS: {brainState.fps}<br/>POSE: {brainState.activePoseName}<br/>FRAMES: {frameCount}</div>
+                 <div className="flex items-center gap-2 mb-1"><Activity size={14} className="text-brand-400" /><span className="text-[10px] font-bold text-gray-300 tracking-widest">KINETIC ENGINE</span></div>
+                 <div className="font-mono text-xs text-brand-300">FPS: {brainState.fps}<br/>MODE: {brainState.mode}<br/>DECK: {currentDeckIdRef.current + 1}</div>
              </div>
              <div className="flex gap-2 pointer-events-auto items-center">
                  {isRecording && <div className="flex items-center gap-2 bg-red-500/20 border border-red-500/50 px-3 py-1.5 rounded-full animate-pulse"><div className="w-2 h-2 bg-red-500 rounded-full" /><span className="text-red-300 font-mono text-xs">{(recordingTime / 1000).toFixed(1)}s</span></div>}
-                 <button onClick={() => isRecording ? stopRecording() : setShowExportMenu(true)} className={`glass-button px-4 py-2 rounded-lg text-white flex items-center gap-2 ${isRecording ? 'bg-red-500/50 border-red-500' : ''}`}><CircleDot size={18} className={isRecording ? 'text-white' : 'text-red-400'} /><span className="text-xs font-bold">{isRecording ? 'STOP REC' : 'REC VIDEO'}</span></button>
-                 <button className="glass-button p-2 rounded-lg text-white" onClick={handleExportWidget} title="Download Standalone Widget"><Download size={20} /></button>
+                 <button onClick={() => isRecording ? stopRecording() : startRecording()} className={`glass-button px-4 py-2 rounded-lg text-white flex items-center gap-2 ${isRecording ? 'bg-red-500/50 border-red-500' : ''}`}><CircleDot size={18} /><span className="text-xs font-bold">{isRecording ? 'STOP' : 'REC VIDEO'}</span></button>
+                 <button className="glass-button p-2 rounded-lg text-white" onClick={handleExportPlayer} title="Export Player"><FileVideo size={20} /></button>
              </div>
           </div>
 
           <div className="flex flex-col items-center gap-4 pointer-events-auto w-full max-w-2xl mx-auto">
               <div className="flex items-center gap-4 bg-black/60 backdrop-blur-xl border border-white/10 p-2 rounded-full shadow-2xl">
-                   {state.audioPreviewUrl ? (
-                       <button onClick={() => { setIsPlaying(!isPlaying); if(isMicActive) toggleMic(); }} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-brand-500 text-white shadow-[0_0_20px_rgba(139,92,246,0.4)]' : 'bg-white/10 text-white hover:bg-white/20'}`}>{isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}</button>
-                   ) : <div className="px-4 text-[10px] text-gray-400 font-mono">NO TRACK LOADED</div>}
+                   <button onClick={togglePlay} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-brand-500 text-white shadow-[0_0_20px_rgba(139,92,246,0.4)]' : 'bg-white/10 text-white hover:bg-white/20'}`}>{isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}</button>
                    <div className="h-8 w-[1px] bg-white/10" />
-                   <button onClick={toggleMic} className={`px-4 py-2 rounded-full flex items-center gap-2 text-xs font-bold transition-all border ${isMicActive ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse' : 'border-transparent text-gray-400 hover:text-white'}`}>{isMicActive ? <Mic size={16} /> : <MicOff size={16} />} LIVE INPUT</button>
+                   <button onClick={toggleMic} className={`px-4 py-2 rounded-full flex items-center gap-2 text-xs font-bold transition-all border ${isMicActive ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse' : 'border-transparent text-gray-400 hover:text-white'}`}>{isMicActive ? <Mic size={16} /> : <MicOff size={16} />} LIVE</button>
                    <div className="h-8 w-[1px] bg-white/10" />
-                   <button onClick={() => setSuperCamActive(!superCamActive)} className={`px-4 py-2 rounded-full flex items-center gap-2 text-xs font-bold transition-all border ${superCamActive ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-white'}`}><Camera size={16} /> SUPER CAM</button>
+                   <button onClick={() => setSuperCamActive(!superCamActive)} className={`px-4 py-2 rounded-full flex items-center gap-2 text-xs font-bold transition-all border ${superCamActive ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-white'}`}><Camera size={16} /> CAM</button>
                    <div className="h-8 w-[1px] bg-white/10" />
                    <button onClick={() => { setShowDeck(false); setShowFX(!showFX); }} className={`px-4 py-2 rounded-full flex items-center gap-2 text-xs font-bold transition-all border ${showFX ? 'bg-brand-500 border-brand-400 text-white' : 'border-transparent text-gray-400 hover:text-white'}`}><Zap size={16} /> FX</button>
                    <div className="h-8 w-[1px] bg-white/10" />
                    <button onClick={() => { setShowFX(false); setShowDeck(!showDeck); }} className={`px-4 py-2 rounded-full flex items-center gap-2 text-xs font-bold transition-all border ${showDeck ? 'bg-white/20 border-white/30 text-white' : 'border-transparent text-gray-400 hover:text-white'}`}><Layers size={16} /> MIXER</button>
               </div>
-              <div className="flex gap-3">
-                  <button onClick={onGenerateMore} className="glass-button px-6 py-2 rounded-full text-xs font-bold text-white flex items-center gap-2 hover:bg-white/20"><Package size={14} /> NEW VARIATIONS</button>
-                  <button onClick={onSaveProject} className="glass-button px-6 py-2 rounded-full text-xs font-bold text-white flex items-center gap-2 hover:bg-white/20"><Download size={14} /> SAVE RIG</button>
-              </div>
           </div>
       </div>
-      
     </div>
   );
 };

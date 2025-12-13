@@ -9,9 +9,10 @@ export enum AppStep {
 
 export type StyleCategory = 'Cinematic' | 'Anime/2D' | 'Digital/Glitch' | 'Artistic';
 export type SubjectCategory = 'CHARACTER' | 'TEXT' | 'SYMBOL';
-export type FrameType = 'body' | 'closeup'; // Distinguish full body from facial frames
-export type SheetRole = 'base' | 'alt' | 'flourish' | 'smooth'; // Added 'smooth'
-export type MoveDirection = 'center' | 'left' | 'right'; // NEW: For choreography
+export type FrameType = 'body' | 'closeup' | 'hands' | 'feet'; 
+export type SheetRole = 'base' | 'alt' | 'flourish' | 'details'; 
+export type MoveDirection = 'center' | 'left' | 'right'; 
+export type SequenceMode = 'GROOVE' | 'IMPACT' | 'FOOTWORK' | 'EMOTE'; 
 
 export interface StylePreset {
   id: string;
@@ -20,13 +21,12 @@ export interface StylePreset {
   description: string;
   promptModifier: string;
   thumbnail: string;
-  hologramParams: HolographicParams; // Links style to background shader
+  hologramParams: HolographicParams; 
 }
 
 export type EnergyLevel = 'low' | 'mid' | 'high';
 export type UserTier = 'free' | 'pro';
 
-// Flexible pose type string
 export type PoseType = string;
 
 export interface GeneratedFrame {
@@ -35,11 +35,12 @@ export interface GeneratedFrame {
   energy: EnergyLevel;
   type?: FrameType; 
   role?: SheetRole; 
-  direction?: MoveDirection; // NEW
+  direction?: MoveDirection; 
   promptUsed?: string; 
-  isVirtual?: boolean; // NEW: For client-side generated frames
+  isVirtual?: boolean; 
   virtualZoom?: number;
   virtualOffsetY?: number;
+  deckId?: number; // Added for multi-deck tracking
 }
 
 export interface SavedProject {
@@ -49,31 +50,46 @@ export interface SavedProject {
     frames: GeneratedFrame[];
     styleId: string;
     subjectCategory: SubjectCategory;
-    hologramParams?: HolographicParams; // NEW: Save params for standalone portability
+    hologramParams?: HolographicParams; 
 }
 
-// NEW: For Multi-Channel Deck System
+export type DeckMixMode = 'sequencer' | 'layer';
+
 export interface DeckSlot {
     id: number;
     rig: SavedProject | null;
     isActive: boolean;
     opacity: number;
-    // Runtime data (not saved directly in state but reconstructed)
+    mixMode: DeckMixMode; // New: Controls whether frames are pooled or overlayed
     images?: Record<string, HTMLImageElement>;
     framesByEnergy?: Record<EnergyLevel, GeneratedFrame[]>;
     closeups?: GeneratedFrame[];
+    hands?: GeneratedFrame[]; 
+    feet?: GeneratedFrame[];
+    // Machine Frame Specialized Buckets
+    mandalas?: GeneratedFrame[];
+    virtuals?: GeneratedFrame[];
+    acrobatics?: GeneratedFrame[];
 }
 
 export interface AuthUser {
-  uid: string; // Firebase UID
+  uid: string; 
   name: string;
   email: string;
   photoURL: string;
 }
 
+export interface FXSettings {
+    hue: { base: number, reactive: number };
+    aberration: { base: number, reactive: number };
+    scanlines: { base: number, reactive: number };
+    stutter: { base: number, reactive: number }; 
+    chaos: { base: number, reactive: number };   
+}
+
 export interface AppState {
   step: AppStep;
-  user: AuthUser | null; // Auth state
+  user: AuthUser | null; 
   showAuthModal: boolean;
   showPaymentModal: boolean;
   
@@ -84,22 +100,21 @@ export interface AppState {
   audioPreviewUrl: string | null;
   selectedStyleId: string;
   
-  // Advanced / Morphing State
-  secondaryStyleId: string; // Target style to morph into
-  morphIntensity: number;   // 0-100: Blend factor between Primary and Secondary
-  reactivity: number;       // 0-100: Audio sensitivity
+  secondaryStyleId: string; 
+  morphIntensity: number;   
+  reactivity: number;       
   
   motionPrompt: string; 
-  motionPreset: string; // Added for dropdown
-  useTurbo: boolean; // Toggle for speed vs quality
-  superMode: boolean; // NEW: Paid 15-frame mode
+  motionPreset: string; 
+  useTurbo: boolean; 
+  superMode: boolean; 
   
-  intensity: number; // 0-100 (Generation energy)
-  duration: number; // seconds
-  smoothness: number; // 0-100 (Hard cut vs Crossfade)
-  stutter: number; // 0-100 (Probability of double-time moves)
+  intensity: number; 
+  duration: number; 
+  smoothness: number; 
+  stutter: number; 
   generatedFrames: GeneratedFrame[]; 
-  subjectCategory: SubjectCategory; // NEW: Detected subject type
+  subjectCategory: SubjectCategory; 
   isGenerating: boolean;
   credits: number;
 }
@@ -121,17 +136,17 @@ export const DEFAULT_STATE: AppState = {
   morphIntensity: 0,
   reactivity: 80,
 
-  motionPrompt: '', // Default empty for auto-analysis
+  motionPrompt: '', 
   motionPreset: 'auto', 
-  useTurbo: true, // Default to fast
-  superMode: false, // Default off
+  useTurbo: true, 
+  superMode: false, 
   
-  intensity: 80, // High default
+  intensity: 80, 
   duration: 30,
-  smoothness: 20, // Default slight smoothing
-  stutter: 50, // Moderate stutter chance
+  smoothness: 20, 
+  stutter: 50, 
   generatedFrames: [],
   subjectCategory: 'CHARACTER',
   isGenerating: false,
-  credits: 0, // Start with 0, require login to get free credit
+  credits: 0, 
 };
