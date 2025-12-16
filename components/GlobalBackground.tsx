@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { QuantumVisualizer, HolographicParams } from './Visualizer/HolographicVisualizer';
 import { AppState, AppStep } from '../types';
 import { STYLE_PRESETS } from '../constants';
@@ -11,9 +11,21 @@ interface Props {
 // Linear interpolation helper
 const lerp = (start: number, end: number, t: number) => start * (1 - t) + end * t;
 
+// Check WebGL support before attempting to create visualizer
+const checkWebGLSupport = (): boolean => {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    return !!gl;
+  } catch (e) {
+    return false;
+  }
+};
+
 export const GlobalBackground: React.FC<Props> = ({ appState }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const visualizerRef = useRef<QuantumVisualizer | null>(null);
+  const [webglFailed, setWebglFailed] = useState(false);
   
   const currentParams = useRef<HolographicParams>({
     hue: 200,
@@ -36,11 +48,19 @@ export const GlobalBackground: React.FC<Props> = ({ appState }) => {
   const overrideParams = useRef<{ hue: number | null }>({ hue: null });
 
   useEffect(() => {
-    if (canvasRef.current && !visualizerRef.current) {
+    if (canvasRef.current && !visualizerRef.current && !webglFailed) {
+      // Check WebGL support first
+      if (!checkWebGLSupport()) {
+        console.warn("WebGL not supported, using fallback background");
+        setWebglFailed(true);
+        return;
+      }
+
       try {
         visualizerRef.current = new QuantumVisualizer(canvasRef.current);
       } catch (e) {
         console.error("Failed to init Quantum visualizer:", e);
+        setWebglFailed(true);
       }
     }
 
@@ -84,10 +104,11 @@ export const GlobalBackground: React.FC<Props> = ({ appState }) => {
 
   useEffect(() => {
     let reqId: number;
+    let renderErrorCount = 0;
 
     const render = () => {
-      if (visualizerRef.current) {
-        
+      if (visualizerRef.current && !webglFailed) {
+        try {
         let target: HolographicParams = { ...currentParams.current };
         
         // BASE PARAMS PER STEP
@@ -183,15 +204,35 @@ export const GlobalBackground: React.FC<Props> = ({ appState }) => {
         }
 
         visualizerRef.current.render();
+        } catch (e) {
+          renderErrorCount++;
+          if (renderErrorCount > 3) {
+            console.error("WebGL render failed multiple times, disabling:", e);
+            setWebglFailed(true);
+            return;
+          }
+        }
       }
       reqId = requestAnimationFrame(render);
     };
     render();
     return () => cancelAnimationFrame(reqId);
-  }, [appState.step, appState.selectedStyleId, appState.secondaryStyleId, appState.morphIntensity, appState.isGenerating, appState.reactivity]);
+  }, [appState.step, appState.selectedStyleId, appState.secondaryStyleId, appState.morphIntensity, appState.isGenerating, appState.reactivity, webglFailed]);
+
+  // Fallback gradient when WebGL fails
+  if (webglFailed) {
+    return (
+      <div
+        className="fixed inset-0 w-full h-full z-0 pointer-events-none"
+        style={{
+          background: 'radial-gradient(ellipse at center, #1a1a2e 0%, #0f0f17 50%, #050505 100%)',
+        }}
+      />
+    );
+  }
 
   return (
-    <canvas 
+    <canvas
       ref={canvasRef}
       className="fixed inset-0 w-full h-full z-0 pointer-events-none" // Pointer events passed to window listeners
     />
