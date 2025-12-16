@@ -6,7 +6,8 @@ import { QuantumVisualizer } from './Visualizer/HolographicVisualizer';
 import { generatePlayerHTML } from '../services/playerExport';
 import { STYLE_PRESETS } from '../constants';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
-import { KineticEngine, KineticState, createDollyZoom, generateVirtualZoomVariants } from '../services/KineticEngine';
+import { KineticEngine, KineticState, KineticTelemetry, createDollyZoom, generateVirtualZoomVariants } from '../services/KineticEngine';
+import { KineticDebugPanel } from './KineticDebugPanel';
 
 interface Step4Props {
   state: AppState;
@@ -70,6 +71,9 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
   const [useKineticEngine, setUseKineticEngine] = useState(true);
   const [kineticState, setKineticState] = useState<KineticState | null>(null);
   const [detectedBPM, setDetectedBPM] = useState(120);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [telemetry, setTelemetry] = useState<KineticTelemetry | null>(null);
+  const [autoBPM, setAutoBPM] = useState(true);
   
   const [brainState, setBrainState] = useState({ activePoseName: 'BASE', fps: 0, mode: 'GROOVE' });
   const [hoveredFrame, setHoveredFrame] = useState<GeneratedFrame | null>(null);
@@ -343,6 +347,19 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
         // Update engine and get state
         const engineState = kineticEngineRef.current.update(deltaTime);
         setKineticState(engineState);
+
+        // Get telemetry for debug panel
+        if (showDebugPanel) {
+            setTelemetry(kineticEngineRef.current.getTelemetry());
+        }
+
+        // Sync BPM from auto-detection
+        if (autoBPM) {
+            const currentBPM = kineticEngineRef.current.getBPM();
+            if (currentBPM !== detectedBPM) {
+                setDetectedBPM(currentBPM);
+            }
+        }
 
         // Sync refs from engine state for rendering
         sequenceModeRef.current = engineState.sequenceMode;
@@ -618,7 +635,7 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
         : sequenceModeRef.current;
     setBrainState({ activePoseName: targetPoseRef.current, fps: Math.round(1/deltaTime), mode: displayMode });
 
-  }, [imagesReady, superCamActive, isRecording, getAnalysis, decks, fxSettings, state.reactivity, useKineticEngine, kineticState]); 
+  }, [imagesReady, superCamActive, isRecording, getAnalysis, decks, fxSettings, state.reactivity, useKineticEngine, kineticState, showDebugPanel, autoBPM, detectedBPM]); 
 
   useEffect(() => {
     if (imagesReady) requestRef.current = requestAnimationFrame(loop);
@@ -900,21 +917,39 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
                      )}
                  </div>
                  {useKineticEngine && (
-                     <div className="mt-2 flex items-center gap-2">
-                         <Gauge size={12} className="text-yellow-400" />
-                         <span className="text-[10px] text-gray-400">BPM:</span>
-                         <input
-                             type="number"
-                             min="60"
-                             max="200"
-                             value={detectedBPM}
-                             onChange={(e) => {
-                                 const bpm = parseInt(e.target.value) || 120;
-                                 setDetectedBPM(bpm);
-                                 kineticEngineRef.current?.setBPM(bpm);
-                             }}
-                             className="w-12 bg-black/40 border border-white/20 rounded px-1 text-[10px] font-mono text-yellow-300"
-                         />
+                     <div className="mt-2 space-y-2">
+                         <div className="flex items-center gap-2">
+                             <Gauge size={12} className="text-yellow-400" />
+                             <span className="text-[10px] text-gray-400">BPM:</span>
+                             <input
+                                 type="number"
+                                 min="60"
+                                 max="200"
+                                 value={detectedBPM}
+                                 disabled={autoBPM}
+                                 onChange={(e) => {
+                                     const bpm = parseInt(e.target.value) || 120;
+                                     setDetectedBPM(bpm);
+                                     kineticEngineRef.current?.setBPM(bpm);
+                                 }}
+                                 className={`w-12 bg-black/40 border border-white/20 rounded px-1 text-[10px] font-mono ${autoBPM ? 'text-green-300' : 'text-yellow-300'}`}
+                             />
+                             <button
+                                 onClick={() => {
+                                     setAutoBPM(!autoBPM);
+                                     kineticEngineRef.current?.setAutoBPM(!autoBPM);
+                                 }}
+                                 className={`text-[8px] px-1.5 py-0.5 rounded ${autoBPM ? 'bg-green-500/30 text-green-300' : 'bg-gray-600/30 text-gray-400'}`}
+                             >
+                                 AUTO
+                             </button>
+                         </div>
+                         <button
+                             onClick={() => setShowDebugPanel(!showDebugPanel)}
+                             className={`text-[9px] w-full py-1 rounded border transition-all ${showDebugPanel ? 'bg-brand-500/30 border-brand-400 text-brand-300' : 'bg-black/30 border-white/10 text-gray-500 hover:text-white'}`}
+                         >
+                             {showDebugPanel ? '◉ DEBUG ON' : '○ DEBUG OFF'}
+                         </button>
                      </div>
                  )}
              </div>
@@ -939,6 +974,13 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
               </div>
           </div>
       </div>
+
+      {/* Debug Panel */}
+      <KineticDebugPanel
+        telemetry={telemetry}
+        isVisible={showDebugPanel && useKineticEngine}
+        onClose={() => setShowDebugPanel(false)}
+      />
     </div>
   );
 };
