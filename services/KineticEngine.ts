@@ -353,11 +353,13 @@ export class BPMDetector {
 export class TransientDetector {
   private history: number[] = [];
   private readonly windowSize: number = 8;
-  private readonly sensitivity: number = 1.5;
+  private readonly sensitivity: number = 2.0; // Increased for sharper spikes only
+  private lastValue: number = 0;
 
   /**
    * Detect sharp transients (snares, hi-hats, clicks).
    * Returns true if a transient is detected.
+   * Improved: Also checks for sudden jump from previous sample.
    */
   detect(value: number): boolean {
     this.history.push(value);
@@ -366,6 +368,7 @@ export class TransientDetector {
     }
 
     if (this.history.length < this.windowSize) {
+      this.lastValue = value;
       return false;
     }
 
@@ -374,11 +377,18 @@ export class TransientDetector {
 
     // Detect transient: current value significantly higher than recent average
     const ratio = value / (prevAvg + 0.01);
-    return ratio > this.sensitivity && value > 0.3;
+
+    // Also require a sudden jump from the previous sample (not gradual increase)
+    const instantDelta = value - this.lastValue;
+    this.lastValue = value;
+
+    // Must be a sharp spike: high ratio AND sudden increase
+    return ratio > this.sensitivity && value > 0.3 && instantDelta > 0.15;
   }
 
   reset(): void {
     this.history = [];
+    this.lastValue = 0;
   }
 }
 
