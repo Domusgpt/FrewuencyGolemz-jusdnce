@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
-    "test:headed": "playwright test --headed"
+    "test:headed": "playwright test --headed",
+    "deploy": "npm run build && echo 'Build complete! Push to main branch to deploy to GitHub Pages'"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
