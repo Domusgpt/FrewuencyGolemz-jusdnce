@@ -1,11 +1,12 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Play, Pause, Video, Settings, Mic, MicOff, Maximize2, Minimize2, Upload, X, Loader2, Sliders, Package, Music, ChevronDown, ChevronUp, Activity, Download, FileVideo, Radio, Star, Camera, Volume2, VolumeX, Sparkles, CircleDot, Monitor, Smartphone, Square, Eye, Layers, Plus, Trash2, Zap, RotateCcw, ZapOff, Shuffle, Merge, Grid } from 'lucide-react';
+import { Play, Pause, Video, Settings, Mic, MicOff, Maximize2, Minimize2, Upload, X, Loader2, Sliders, Package, Music, ChevronDown, ChevronUp, Activity, Download, FileVideo, Radio, Star, Camera, Volume2, VolumeX, Sparkles, CircleDot, Monitor, Smartphone, Square, Eye, Layers, Plus, Trash2, Zap, RotateCcw, ZapOff, Shuffle, Merge, Grid, Gauge } from 'lucide-react';
 import { AppState, EnergyLevel, MoveDirection, FrameType, DeckSlot, SavedProject, GeneratedFrame, SequenceMode, FXSettings } from '../types';
 import { QuantumVisualizer } from './Visualizer/HolographicVisualizer';
 import { generatePlayerHTML } from '../services/playerExport';
 import { STYLE_PRESETS } from '../constants';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
+import { KineticEngine, KineticState, createDollyZoom, generateVirtualZoomVariants } from '../services/KineticEngine';
 
 interface Step4Props {
   state: AppState;
@@ -58,11 +59,17 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
   const [recordingTime, setRecordingTime] = useState(0);
 
   const hologramRef = useRef<QuantumVisualizer | null>(null);
-  
+  const kineticEngineRef = useRef<KineticEngine | null>(null);
+
   const requestRef = useRef<number>(0);
-  const lastFrameTimeRef = useRef<number>(0); 
+  const lastFrameTimeRef = useRef<number>(0);
   const lastBeatTimeRef = useRef<number>(0);
   const lastStutterRef = useRef<number>(0);
+
+  // Kinetic Engine State
+  const [useKineticEngine, setUseKineticEngine] = useState(true);
+  const [kineticState, setKineticState] = useState<KineticState | null>(null);
+  const [detectedBPM, setDetectedBPM] = useState(120);
   
   const [brainState, setBrainState] = useState({ activePoseName: 'BASE', fps: 0, mode: 'GROOVE' });
   const [hoveredFrame, setHoveredFrame] = useState<GeneratedFrame | null>(null);
@@ -220,10 +227,18 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
               subjectCategory: state.subjectCategory
           };
           setDecks(prev => prev.map(d => d.id === 0 ? { ...d, rig: defaultRig, isActive: true, mixMode: 'sequencer' } : d));
-          frameLookupRef.current.clear(); 
+          frameLookupRef.current.clear();
+
+          // Initialize Kinetic Engine
+          if (!kineticEngineRef.current) {
+              kineticEngineRef.current = new KineticEngine();
+          }
+          kineticEngineRef.current.loadFramePool(state.generatedFrames);
+          kineticEngineRef.current.setBPM(detectedBPM);
+
           processRig(state.generatedFrames, 0).then(() => setImagesReady(true));
-      } 
-  }, [state.generatedFrames, processRig]);
+      }
+  }, [state.generatedFrames, processRig, detectedBPM]);
 
   // Visualizer Init
   useEffect(() => {
@@ -263,7 +278,7 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
   // --- THE BRAIN LOOP ---
   const loop = useCallback((time: number) => {
     if (!lastFrameTimeRef.current) lastFrameTimeRef.current = time;
-    const deltaTime = Math.min((time - lastFrameTimeRef.current) / 1000, 0.1); 
+    const deltaTime = Math.min((time - lastFrameTimeRef.current) / 1000, 0.1);
     lastFrameTimeRef.current = time;
     requestRef.current = requestAnimationFrame(loop);
 
@@ -273,19 +288,19 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
     }
 
     const { bass, mid, high, energy } = getAnalysis();
-    
+
     // SEQUENCER LOGIC: Gather all "Sequencer" decks
     const seqDecks = decks.filter(d => d.isActive && d.rig && d.mixMode === 'sequencer');
     const refDeck = seqDecks[0]; // Primary logic driver, but pools are shared
 
     // --- PHYSICS SOLVER (Springs) ---
     const sensitivity = (state.reactivity || 80) / 100;
-    const stiffness = 140; 
+    const stiffness = 140;
     const damping = 8;
-    
-    let targetRotX = bass * 35.0 * sensitivity; 
-    let targetRotY = mid * 25.0 * Math.sin(time * 0.005) * sensitivity; 
-    
+
+    let targetRotX = bass * 35.0 * sensitivity;
+    let targetRotY = mid * 25.0 * Math.sin(time * 0.005) * sensitivity;
+
     if (sequenceModeRef.current === 'FOOTWORK') {
         targetRotX += 20; // Look down
     }
@@ -300,127 +315,192 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
         hologramRef.current.updateAudio({ bass, mid, high, energy });
         const rx = superCamActive ? masterRotXRef.current * 0.3 : 0;
         const ry = superCamActive ? masterRotYRef.current * 0.3 : 0;
-        hologramRef.current.render(0, { x: rx, y: ry, z: 0 }); 
+        hologramRef.current.render(0, { x: rx, y: ry, z: 0 });
     }
 
     const now = Date.now();
-    
-    // --- STUTTER & GLITCH ENGINE ---
-    if (triggerGlitchRef.current) {
-        rgbSplitRef.current = 1.0;
-        charSkewRef.current = Math.sin(time * 0.05) * 0.5;
-        // Chaos: Random deck, random frame
-        if (Math.random() > 0.8 && seqDecks.length > 0) {
-             const randomDeck = seqDecks[Math.floor(Math.random() * seqDecks.length)];
-             if (randomDeck.framesByEnergy?.high) {
-                const pool = randomDeck.framesByEnergy.high;
-                const frame = pool[Math.floor(Math.random() * pool.length)];
-                triggerTransition(frame.pose, randomDeck.id, 'CUT');
-             }
-        }
-    }
-    
-    const stutterThreshold = 1.0 - (fxSettings.stutter.base / 100); 
-    const isStuttering = triggerStutterRef.current || (mid > 0.6 && Math.random() > stutterThreshold);
 
-    if (isStuttering && (now - lastStutterRef.current) > 80 && refDeck) {
-        lastStutterRef.current = now;
-        // Retrigger same frame (Stutter)
-        triggerTransition(targetPoseRef.current, currentDeckIdRef.current, 'CUT'); 
-        charSquashRef.current = 1.2; 
-        rgbSplitRef.current = 0.5;
-        
-        // Variation
-        if (Math.random() > 0.5) {
-             // Try Mirror or Virtual
-             if (targetPoseRef.current.includes('_mirror')) {
-                 triggerTransition(targetPoseRef.current.replace('_mirror',''), currentDeckIdRef.current, 'CUT');
-             } else {
-                 triggerTransition(targetPoseRef.current + '_mirror', currentDeckIdRef.current, 'CUT');
-             }
-        }
-    }
-    else if ((now - lastBeatTimeRef.current) > 300 && bass > 0.5 && seqDecks.length > 0) {
-        // --- INTELLIGENT SEQUENCER ---
-        lastBeatTimeRef.current = now;
-        barCounterRef.current = (barCounterRef.current + 1) % 16;
-        phraseCounterRef.current = (phraseCounterRef.current + 1) % 8; 
-        
-        const isDrop = bass > 0.8; 
-        const isPeak = high > 0.7; 
-        const isFill = phraseCounterRef.current === 7; 
+    // ========== KINETIC ENGINE MODE ==========
+    if (useKineticEngine && kineticEngineRef.current) {
+        // Feed audio into lookahead buffer
+        kineticEngineRef.current.feedAudio(bass, mid, high);
 
+        // Handle manual triggers
+        if (triggerStutterRef.current) {
+            kineticEngineRef.current.triggerStutter();
+            charSquashRef.current = 1.2;
+            rgbSplitRef.current = 0.5;
+        }
+        if (triggerGlitchRef.current) {
+            kineticEngineRef.current.triggerGlitch();
+            rgbSplitRef.current = 1.0;
+            charSkewRef.current = Math.sin(time * 0.05) * 0.5;
+        }
         if (triggerReverseRef.current) {
-             sequenceModeRef.current = 'GROOVE';
-        } else {
-            // Check global pool capabilities
-            const hasCloseups = seqDecks.some(d => d.closeups && d.closeups.length > 0);
-            const hasHands = seqDecks.some(d => d.hands && d.hands.length > 0);
-            const hasFeet = seqDecks.some(d => d.feet && d.feet.length > 0);
-
-            if (isPeak && hasCloseups) sequenceModeRef.current = 'EMOTE';
-            else if (isDrop && hasHands) sequenceModeRef.current = 'IMPACT';
-            else if (barCounterRef.current >= 12 && hasFeet) sequenceModeRef.current = 'FOOTWORK';
-            else if (isFill) sequenceModeRef.current = 'IMPACT';
-            else sequenceModeRef.current = 'GROOVE';
-        }
-        
-        if (Math.random() * 100 < fxSettings.chaos.base) {
-             sequenceModeRef.current = 'IMPACT';
+            kineticEngineRef.current.forceState('idle');
         }
 
-        // --- GLOBAL FRAME POOLING ---
-        // Helper to grab frames from ALL sequencer decks
-        const gatherFrames = (selector: (d: DeckSlot) => GeneratedFrame[] | undefined) => {
-            return seqDecks.flatMap(d => {
-                const frames = selector(d) || [];
-                return frames.map(f => ({...f, deckId: d.id})); // Ensure deckID is attached
-            });
-        };
+        // Update engine and get state
+        const engineState = kineticEngineRef.current.update(deltaTime);
+        setKineticState(engineState);
 
-        let pool: GeneratedFrame[] = [];
-        let nextMode: InterpMode = 'CUT';
-        
-        switch (sequenceModeRef.current) {
-            case 'EMOTE':
-                if (isPeak) {
-                     pool = gatherFrames(d => d.virtuals);
-                     if (pool.length === 0) pool = gatherFrames(d => d.closeups);
-                     nextMode = 'CUT';
-                } else {
-                     pool = gatherFrames(d => d.closeups);
-                     nextMode = 'MORPH'; 
-                }
-                camZoomRef.current = 1.5; 
-                break;
-            case 'FOOTWORK':
-                pool = gatherFrames(d => d.feet);
-                nextMode = 'CUT';
-                break;
-            case 'IMPACT':
-                if (isDrop) pool = gatherFrames(d => d.mandalas);
-                if (pool.length === 0 && isFill) pool = gatherFrames(d => d.acrobatics);
-                if (pool.length === 0) pool = gatherFrames(d => d.hands);
-                if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.high);
-                nextMode = 'CUT';
-                break;
-            case 'GROOVE':
-            default:
-                const dir = barCounterRef.current % 2 === 0 ? 'left' : 'right';
-                pool = gatherFrames(d => d.framesByEnergy?.mid.filter(f => f.direction === dir));
-                if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.mid);
-                if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.low);
-                
-                nextMode = 'CUT';
-                charSquashRef.current = 0.85; 
-                charBounceYRef.current = -50 * bass * sensitivity; 
-                break;
+        // Sync refs from engine state for rendering
+        sequenceModeRef.current = engineState.sequenceMode;
+        barCounterRef.current = engineState.barCounter;
+        phraseCounterRef.current = engineState.phraseCounter;
+
+        // Update transition if engine changed frames
+        if (engineState.currentFrame) {
+            const newPose = engineState.currentFrame.pose;
+            if (newPose !== targetPoseRef.current) {
+                sourcePoseRef.current = targetPoseRef.current;
+                targetPoseRef.current = newPose;
+                transitionProgressRef.current = engineState.transitionProgress;
+                transitionModeRef.current = engineState.transitionStyle;
+
+                // Set transition speed based on style
+                let speed = 20.0;
+                if (engineState.transitionStyle === 'CUT') speed = 1000.0;
+                else if (engineState.transitionStyle === 'MORPH') speed = 5.0;
+                else if (engineState.transitionStyle === 'ZOOM_IN') speed = 6.0;
+                else if (engineState.transitionStyle === 'SLIDE') speed = 8.0;
+                else if (engineState.transitionStyle === 'SMOOTH') speed = 1.5;
+                transitionSpeedRef.current = speed;
+            }
         }
 
-        if (pool.length > 0) {
-            const nextFrame = pool[Math.floor(Math.random() * pool.length)];
-            // Pass the specific Deck ID of the chosen frame
-            triggerTransition(nextFrame.pose, nextFrame.deckId || 0, nextMode);
+        // Zoom for closeup/impact modes
+        const nodeConfig = kineticEngineRef.current.getCurrentNodeConfig();
+        if (nodeConfig.mechanicalFx === 'zoom') {
+            camZoomRef.current = 1.5;
+        }
+
+        // Beat-synced bounce on bass hits
+        if (engineState.beatPos < 0.1 && bass > 0.5) {
+            charSquashRef.current = 0.85;
+            charBounceYRef.current = -50 * bass * sensitivity;
+        }
+
+    } else {
+        // ========== LEGACY DFF MODE ==========
+
+        // --- STUTTER & GLITCH ENGINE ---
+        if (triggerGlitchRef.current) {
+            rgbSplitRef.current = 1.0;
+            charSkewRef.current = Math.sin(time * 0.05) * 0.5;
+            // Chaos: Random deck, random frame
+            if (Math.random() > 0.8 && seqDecks.length > 0) {
+                 const randomDeck = seqDecks[Math.floor(Math.random() * seqDecks.length)];
+                 if (randomDeck.framesByEnergy?.high) {
+                    const pool = randomDeck.framesByEnergy.high;
+                    const frame = pool[Math.floor(Math.random() * pool.length)];
+                    triggerTransition(frame.pose, randomDeck.id, 'CUT');
+                 }
+            }
+        }
+
+        const stutterThreshold = 1.0 - (fxSettings.stutter.base / 100);
+        const isStuttering = triggerStutterRef.current || (mid > 0.6 && Math.random() > stutterThreshold);
+
+        if (isStuttering && (now - lastStutterRef.current) > 80 && refDeck) {
+            lastStutterRef.current = now;
+            // Retrigger same frame (Stutter)
+            triggerTransition(targetPoseRef.current, currentDeckIdRef.current, 'CUT');
+            charSquashRef.current = 1.2;
+            rgbSplitRef.current = 0.5;
+
+            // Variation
+            if (Math.random() > 0.5) {
+                 // Try Mirror or Virtual
+                 if (targetPoseRef.current.includes('_mirror')) {
+                     triggerTransition(targetPoseRef.current.replace('_mirror',''), currentDeckIdRef.current, 'CUT');
+                 } else {
+                     triggerTransition(targetPoseRef.current + '_mirror', currentDeckIdRef.current, 'CUT');
+                 }
+            }
+        }
+        else if ((now - lastBeatTimeRef.current) > 300 && bass > 0.5 && seqDecks.length > 0) {
+            // --- INTELLIGENT SEQUENCER ---
+            lastBeatTimeRef.current = now;
+            barCounterRef.current = (barCounterRef.current + 1) % 16;
+            phraseCounterRef.current = (phraseCounterRef.current + 1) % 8;
+
+            const isDrop = bass > 0.8;
+            const isPeak = high > 0.7;
+            const isFill = phraseCounterRef.current === 7;
+
+            if (triggerReverseRef.current) {
+                 sequenceModeRef.current = 'GROOVE';
+            } else {
+                // Check global pool capabilities
+                const hasCloseups = seqDecks.some(d => d.closeups && d.closeups.length > 0);
+                const hasHands = seqDecks.some(d => d.hands && d.hands.length > 0);
+                const hasFeet = seqDecks.some(d => d.feet && d.feet.length > 0);
+
+                if (isPeak && hasCloseups) sequenceModeRef.current = 'EMOTE';
+                else if (isDrop && hasHands) sequenceModeRef.current = 'IMPACT';
+                else if (barCounterRef.current >= 12 && hasFeet) sequenceModeRef.current = 'FOOTWORK';
+                else if (isFill) sequenceModeRef.current = 'IMPACT';
+                else sequenceModeRef.current = 'GROOVE';
+            }
+
+            if (Math.random() * 100 < fxSettings.chaos.base) {
+                 sequenceModeRef.current = 'IMPACT';
+            }
+
+            // --- GLOBAL FRAME POOLING ---
+            // Helper to grab frames from ALL sequencer decks
+            const gatherFrames = (selector: (d: DeckSlot) => GeneratedFrame[] | undefined) => {
+                return seqDecks.flatMap(d => {
+                    const frames = selector(d) || [];
+                    return frames.map(f => ({...f, deckId: d.id})); // Ensure deckID is attached
+                });
+            };
+
+            let pool: GeneratedFrame[] = [];
+            let nextMode: InterpMode = 'CUT';
+
+            switch (sequenceModeRef.current) {
+                case 'EMOTE':
+                    if (isPeak) {
+                         pool = gatherFrames(d => d.virtuals);
+                         if (pool.length === 0) pool = gatherFrames(d => d.closeups);
+                         nextMode = 'CUT';
+                    } else {
+                         pool = gatherFrames(d => d.closeups);
+                         nextMode = 'MORPH';
+                    }
+                    camZoomRef.current = 1.5;
+                    break;
+                case 'FOOTWORK':
+                    pool = gatherFrames(d => d.feet);
+                    nextMode = 'CUT';
+                    break;
+                case 'IMPACT':
+                    if (isDrop) pool = gatherFrames(d => d.mandalas);
+                    if (pool.length === 0 && isFill) pool = gatherFrames(d => d.acrobatics);
+                    if (pool.length === 0) pool = gatherFrames(d => d.hands);
+                    if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.high);
+                    nextMode = 'CUT';
+                    break;
+                case 'GROOVE':
+                default:
+                    const dir = barCounterRef.current % 2 === 0 ? 'left' : 'right';
+                    pool = gatherFrames(d => d.framesByEnergy?.mid.filter(f => f.direction === dir));
+                    if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.mid);
+                    if (pool.length === 0) pool = gatherFrames(d => d.framesByEnergy?.low);
+
+                    nextMode = 'CUT';
+                    charSquashRef.current = 0.85;
+                    charBounceYRef.current = -50 * bass * sensitivity;
+                    break;
+            }
+
+            if (pool.length > 0) {
+                const nextFrame = pool[Math.floor(Math.random() * pool.length)];
+                // Pass the specific Deck ID of the chosen frame
+                triggerTransition(nextFrame.pose, nextFrame.deckId || 0, nextMode);
+            }
         }
     }
 
@@ -532,9 +612,13 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
          render(ctx, recordCanvasRef.current.width, recordCanvasRef.current.height);
     }
     
-    setBrainState({ activePoseName: targetPoseRef.current, fps: Math.round(1/deltaTime), mode: sequenceModeRef.current });
+    // Update brain state display
+    const displayMode = useKineticEngine && kineticState
+        ? `${kineticState.currentNode.toUpperCase()}${kineticState.isLocked ? ' [LOCKED]' : ''}`
+        : sequenceModeRef.current;
+    setBrainState({ activePoseName: targetPoseRef.current, fps: Math.round(1/deltaTime), mode: displayMode });
 
-  }, [imagesReady, superCamActive, isRecording, getAnalysis, decks, fxSettings, state.reactivity]); 
+  }, [imagesReady, superCamActive, isRecording, getAnalysis, decks, fxSettings, state.reactivity, useKineticEngine, kineticState]); 
 
   useEffect(() => {
     if (imagesReady) requestRef.current = requestAnimationFrame(loop);
@@ -795,8 +879,44 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
       <div className="absolute inset-0 pointer-events-none z-30 p-6 flex flex-col justify-between">
           <div className="flex justify-between items-start">
              <div className="bg-black/40 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto">
-                 <div className="flex items-center gap-2 mb-1"><Activity size={14} className="text-brand-400" /><span className="text-[10px] font-bold text-gray-300 tracking-widest">KINETIC ENGINE</span></div>
-                 <div className="font-mono text-xs text-brand-300">FPS: {brainState.fps}<br/>MODE: {brainState.mode}<br/>DECK: {currentDeckIdRef.current + 1}</div>
+                 <div className="flex items-center gap-2 mb-1">
+                     <Activity size={14} className={useKineticEngine ? "text-green-400" : "text-brand-400"} />
+                     <span className="text-[10px] font-bold text-gray-300 tracking-widest">
+                         {useKineticEngine ? 'KINETIC CORE' : 'LEGACY DFF'}
+                     </span>
+                     <button
+                         onClick={() => setUseKineticEngine(!useKineticEngine)}
+                         className={`ml-2 w-8 h-4 rounded-full transition-all ${useKineticEngine ? 'bg-green-500' : 'bg-gray-600'}`}
+                     >
+                         <div className={`w-3 h-3 rounded-full bg-white transition-transform ${useKineticEngine ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                     </button>
+                 </div>
+                 <div className="font-mono text-xs text-brand-300">
+                     FPS: {brainState.fps}<br/>
+                     MODE: {brainState.mode}<br/>
+                     DECK: {currentDeckIdRef.current + 1}
+                     {useKineticEngine && kineticState && (
+                         <><br/>BEAT: {(kineticState.beatPos * 100).toFixed(0)}%<br/>BAR: {kineticState.barCounter}/16</>
+                     )}
+                 </div>
+                 {useKineticEngine && (
+                     <div className="mt-2 flex items-center gap-2">
+                         <Gauge size={12} className="text-yellow-400" />
+                         <span className="text-[10px] text-gray-400">BPM:</span>
+                         <input
+                             type="number"
+                             min="60"
+                             max="200"
+                             value={detectedBPM}
+                             onChange={(e) => {
+                                 const bpm = parseInt(e.target.value) || 120;
+                                 setDetectedBPM(bpm);
+                                 kineticEngineRef.current?.setBPM(bpm);
+                             }}
+                             className="w-12 bg-black/40 border border-white/20 rounded px-1 text-[10px] font-mono text-yellow-300"
+                         />
+                     </div>
+                 )}
              </div>
              <div className="flex gap-2 pointer-events-auto items-center">
                  {isRecording && <div className="flex items-center gap-2 bg-red-500/20 border border-red-500/50 px-3 py-1.5 rounded-full animate-pulse"><div className="w-2 h-2 bg-red-500 rounded-full" /><span className="text-red-300 font-mono text-xs">{(recordingTime / 1000).toFixed(1)}s</span></div>}
