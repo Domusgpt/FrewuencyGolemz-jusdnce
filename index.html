@@ -9,94 +9,96 @@
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Rajdhani', 'sans-serif'],
-            },
-            colors: {
-              brand: {
-                50: '#f5f3ff',
-                100: '#ede9fe',
-                200: '#ddd6fe',
-                300: '#c4b5fd',
-                400: '#a78bfa',
-                500: '#8b5cf6',
-                600: '#7c3aed',
-                700: '#6d28d9',
-                800: '#5b21b6',
-                900: '#4c1d95',
-                950: '#2e1065',
+      if (typeof tailwind !== 'undefined') {
+        tailwind.config = {
+          darkMode: 'class',
+          theme: {
+            extend: {
+              fontFamily: {
+                sans: ['Rajdhani', 'sans-serif'],
               },
-              dark: {
-                bg: '#0f0f11',
-                surface: '#18181b',
-                border: '#27272a'
-              }
-            },
-            animation: {
-              'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'fade-in': 'fadeIn 0.5s ease-out forwards',
-              'holo-reveal': 'holoReveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-              'slide-in-right': 'slideInRight 0.4s ease-out forwards',
-              'zoom-out': 'zoomOut 0.5s ease-out forwards',
-              'glitch': 'glitchAnim 0.3s infinite',
-              'text-shimmer': 'textShimmer 3s ease-in-out infinite alternate',
-              'float': 'float 6s ease-in-out infinite',
-              'shake': 'shake 0.5s cubic-bezier(.36,.07,.19,.97) both',
-            },
-            keyframes: {
-              fadeIn: {
-                '0%': { opacity: '0', transform: 'translateY(10px)' },
-                '100%': { opacity: '1', transform: 'translateY(0)' },
-              },
-              holoReveal: {
-                '0%': { 
-                  opacity: '0', 
-                  transform: 'scale(0.95) translateY(20px)',
-                  clipPath: 'inset(0 100% 0 0)'
+              colors: {
+                brand: {
+                  50: '#f5f3ff',
+                  100: '#ede9fe',
+                  200: '#ddd6fe',
+                  300: '#c4b5fd',
+                  400: '#a78bfa',
+                  500: '#8b5cf6',
+                  600: '#7c3aed',
+                  700: '#6d28d9',
+                  800: '#5b21b6',
+                  900: '#4c1d95',
+                  950: '#2e1065',
                 },
-                '100%': { 
-                  opacity: '1', 
-                  transform: 'scale(1) translateY(0)',
-                  clipPath: 'inset(0 0 0 0)'
+                dark: {
+                  bg: '#0f0f11',
+                  surface: '#18181b',
+                  border: '#27272a'
                 }
               },
-              slideInRight: {
-                '0%': { opacity: '0', transform: 'translateX(20px)' },
-                '100%': { opacity: '1', transform: 'translateX(0)' },
+              animation: {
+                'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                'fade-in': 'fadeIn 0.5s ease-out forwards',
+                'holo-reveal': 'holoReveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+                'slide-in-right': 'slideInRight 0.4s ease-out forwards',
+                'zoom-out': 'zoomOut 0.5s ease-out forwards',
+                'glitch': 'glitchAnim 0.3s infinite',
+                'text-shimmer': 'textShimmer 3s ease-in-out infinite alternate',
+                'float': 'float 6s ease-in-out infinite',
+                'shake': 'shake 0.5s cubic-bezier(.36,.07,.19,.97) both',
               },
-              zoomOut: {
-                '0%': { opacity: '0', transform: 'scale(1.1)' },
-                '100%': { opacity: '1', transform: 'scale(1)' },
-              },
-              glitchAnim: {
-                '0%': { transform: 'translate(0)' },
-                '20%': { transform: 'translate(-2px, 2px)' },
-                '40%': { transform: 'translate(-2px, -2px)' },
-                '60%': { transform: 'translate(2px, 2px)' },
-                '80%': { transform: 'translate(2px, -2px)' },
-                '100%': { transform: 'translate(0)' }
-              },
-              textShimmer: {
-                '0%': { backgroundPosition: '0% 50%' },
-                '100%': { backgroundPosition: '100% 50%' }
-              },
-              float: {
-                '0%, 100%': { transform: 'translateY(0)' },
-                '50%': { transform: 'translateY(-10px)' }
-              },
-              shake: {
-                '10%, 90%': { transform: 'translate3d(-1px, 0, 0)' },
-                '20%, 80%': { transform: 'translate3d(2px, 0, 0)' },
-                '30%, 50%, 70%': { transform: 'translate3d(-4px, 0, 0)' },
-                '40%, 60%': { transform: 'translate3d(4px, 0, 0)' }
+              keyframes: {
+                fadeIn: {
+                  '0%': { opacity: '0', transform: 'translateY(10px)' },
+                  '100%': { opacity: '1', transform: 'translateY(0)' },
+                },
+                holoReveal: {
+                  '0%': {
+                    opacity: '0',
+                    transform: 'scale(0.95) translateY(20px)',
+                    clipPath: 'inset(0 100% 0 0)'
+                  },
+                  '100%': {
+                    opacity: '1',
+                    transform: 'scale(1) translateY(0)',
+                    clipPath: 'inset(0 0 0 0)'
+                  }
+                },
+                slideInRight: {
+                  '0%': { opacity: '0', transform: 'translateX(20px)' },
+                  '100%': { opacity: '1', transform: 'translateX(0)' },
+                },
+                zoomOut: {
+                  '0%': { opacity: '0', transform: 'scale(1.1)' },
+                  '100%': { opacity: '1', transform: 'scale(1)' },
+                },
+                glitchAnim: {
+                  '0%': { transform: 'translate(0)' },
+                  '20%': { transform: 'translate(-2px, 2px)' },
+                  '40%': { transform: 'translate(-2px, -2px)' },
+                  '60%': { transform: 'translate(2px, 2px)' },
+                  '80%': { transform: 'translate(2px, -2px)' },
+                  '100%': { transform: 'translate(0)' }
+                },
+                textShimmer: {
+                  '0%': { backgroundPosition: '0% 50%' },
+                  '100%': { backgroundPosition: '100% 50%' }
+                },
+                float: {
+                  '0%, 100%': { transform: 'translateY(0)' },
+                  '50%': { transform: 'translateY(-10px)' }
+                },
+                shake: {
+                  '10%, 90%': { transform: 'translate3d(-1px, 0, 0)' },
+                  '20%, 80%': { transform: 'translate3d(2px, 0, 0)' },
+                  '30%, 50%, 70%': { transform: 'translate3d(-4px, 0, 0)' },
+                  '40%, 60%': { transform: 'translate3d(4px, 0, 0)' }
+                }
               }
-            }
+            },
           },
-        },
+        }
       }
     </script>
     <style>
@@ -153,19 +155,9 @@
         color: #a78bfa;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0"
-  }
-}
-</script>
 </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

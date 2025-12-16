@@ -4,6 +4,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+    // Get API key from environment variable (GitHub Actions) or .env file (local dev)
+    const apiKey = process.env.API_KEY || env.GEMINI_API_KEY || env.API_KEY || '';
     return {
       // GitHub Pages base path - update 'FrewuencyGolemz-jusdnce' to match your repo name
       base: mode === 'production' ? '/FrewuencyGolemz-jusdnce/' : '/',
@@ -13,8 +15,8 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.API_KEY': JSON.stringify(apiKey),
+        'process.env.GEMINI_API_KEY': JSON.stringify(apiKey)
       },
       resolve: {
         alias: {
