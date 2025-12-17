@@ -105,7 +105,7 @@ const App: React.FC = () => {
   const handleGenerate = async (forceTurbo: boolean = false, forceSuper: boolean = false) => {
     if (!appState.imagePreviewUrl) return;
     
-    setAppState(prev => ({ ...prev, isGenerating: true, step: AppStep.PREVIEW, generatedFrames: [] }));
+    setAppState(prev => ({ ...prev, isGenerating: true, step: AppStep.PREVIEW, generatedFrames: [], generationError: null }));
 
     const style = STYLE_PRESETS.find(s => s.id === appState.selectedStyleId);
     const imageBase64 = appState.imagePreviewUrl;
@@ -143,12 +143,27 @@ const App: React.FC = () => {
     } catch (e: any) {
         console.error("Generation Failed:", e);
         const msg = e.message || "Unknown error";
-        if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) {
-            alert("API Permission Denied (403). Please ensure your API Key has access to 'gemini-2.5-flash-image'.");
-        } else {
-            alert(`Generation failed: ${msg}`);
+        let userMessage = msg;
+
+        // Provide helpful error messages
+        if (msg.includes('API Key is missing')) {
+            userMessage = "API Key is missing. The build may not have the GEMINI_API_KEY secret embedded. Please check GitHub Actions build logs.";
+        } else if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) {
+            userMessage = "API Permission Denied (403). Your API Key may not have access to 'gemini-2.5-flash-image'. Check Google AI Studio for permissions.";
+        } else if (msg.includes('invalid') || msg.includes('API_KEY_INVALID')) {
+            userMessage = "API Key is invalid. Please generate a new key from Google AI Studio and update GEMINI_API_KEY in GitHub Secrets.";
+        } else if (msg.includes('expired')) {
+            userMessage = "API Key has expired. Please generate a new key from Google AI Studio.";
+        } else if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+            userMessage = "API quota exceeded. Please wait or upgrade your Google AI Studio plan.";
         }
-        setAppState(prev => ({ ...prev, isGenerating: false, step: AppStep.DIRECTOR }));
+
+        // Store error for display in UI (stay on PREVIEW to show error)
+        setAppState(prev => ({
+            ...prev,
+            isGenerating: false,
+            generationError: userMessage
+        }));
     }
   };
   

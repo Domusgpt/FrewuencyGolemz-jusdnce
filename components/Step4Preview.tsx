@@ -717,16 +717,21 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
               const project = JSON.parse(ev.target?.result as string) as SavedProject;
               if (!project.frames) throw new Error("Invalid Rig");
               const emptySlot = decks.find(d => !d.rig);
-              if (emptySlot) {
-                  setDecks(prev => prev.map(d => d.id === emptySlot.id ? { ...d, rig: project, isActive: true, mixMode: 'sequencer' } : d));
-                  frameLookupRef.current.clear();
-                  // Re-process ALL decks to rebuild lookup
-                  // Note: In a real app we'd optimize this, but here we just process the new one and rely on deckId separation
-                  processRig(project.frames, emptySlot.id);
-              } else {
-                   setDecks(prev => prev.map(d => d.id === 3 ? { ...d, rig: project, isActive: true, mixMode: 'sequencer' } : d));
-                   processRig(project.frames, 3);
-              }
+              const targetSlotId = emptySlot ? emptySlot.id : 3;
+
+              setDecks(prev => prev.map(d => d.id === targetSlotId ? { ...d, rig: project, isActive: true, mixMode: 'sequencer' } : d));
+              frameLookupRef.current.clear();
+
+              // Process the rig and set imagesReady when done
+              processRig(project.frames, targetSlotId).then(() => {
+                  setImagesReady(true);
+                  // If this is the first rig loaded, initialize Kinetic Engine with these frames
+                  if (!kineticEngineRef.current) {
+                      kineticEngineRef.current = new KineticEngine();
+                  }
+                  kineticEngineRef.current.loadFramePool(project.frames);
+                  kineticEngineRef.current.setBPM(detectedBPM);
+              });
           } catch (err) { alert("Failed to load rig."); }
       };
       reader.readAsText(file);
@@ -755,11 +760,72 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
            <canvas ref={charCanvasRef} className="absolute inset-0 w-full h-full object-contain z-10" />
       </div>
 
-      {!imagesReady && !state.isGenerating && (
+      {/* GENERATION ERROR STATE */}
+      {state.generationError && (
+         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-50 backdrop-blur-md p-8">
+             <div className="max-w-md text-center">
+                 <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/20 flex items-center justify-center">
+                     <X size={32} className="text-red-500" />
+                 </div>
+                 <h3 className="text-white font-bold text-xl mb-2">Generation Failed</h3>
+                 <p className="text-red-400 font-mono text-sm mb-6 leading-relaxed">{state.generationError}</p>
+
+                 <div className="space-y-3">
+                     <button
+                         onClick={onGenerateMore}
+                         className="w-full px-6 py-3 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2"
+                     >
+                         <RotateCcw size={16} /> Try Again
+                     </button>
+                     <p className="text-gray-500 text-xs">
+                         Check browser console (F12) for detailed error logs
+                     </p>
+                 </div>
+
+                 <div className="mt-6 p-4 bg-white/5 rounded-lg text-left">
+                     <p className="text-xs text-gray-400 font-bold mb-2">TROUBLESHOOTING:</p>
+                     <ul className="text-xs text-gray-500 space-y-1">
+                         <li>• Verify GEMINI_API_KEY is set in GitHub Secrets</li>
+                         <li>• Trigger a new deployment after adding the secret</li>
+                         <li>• Ensure your API key has image generation access</li>
+                         <li>• Check Google AI Studio for quota limits</li>
+                     </ul>
+                 </div>
+             </div>
+         </div>
+      )}
+
+      {/* GENERATING STATE */}
+      {state.isGenerating && (
+         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-50 backdrop-blur-md">
+             <Loader2 size={64} className="text-brand-500 animate-spin mb-4" />
+             <p className="text-white font-bold text-lg mb-2">GENERATING DANCE FRAMES</p>
+             <p className="text-brand-300 font-mono tracking-widest animate-pulse">
+                 {state.generatedFrames.length > 0
+                     ? `${state.generatedFrames.length} frames ready...`
+                     : 'Connecting to Gemini AI...'}
+             </p>
+             <p className="text-gray-500 text-xs mt-4 max-w-xs text-center">
+                 Creating sprite sheets with base poses, actions, and variations
+             </p>
+         </div>
+      )}
+
+      {/* LOADING STATE (frames exist but not yet processed) */}
+      {!imagesReady && !state.isGenerating && !state.generationError && state.generatedFrames.length > 0 && (
          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-50 backdrop-blur-md">
              <Loader2 size={48} className="text-brand-500 animate-spin mb-4" />
              <p className="text-white font-mono tracking-widest animate-pulse">KINETIC RIG INITIALIZING...</p>
              <p className="text-gray-500 text-xs mt-2">Loading {frameCount} mechanical frames</p>
+         </div>
+      )}
+
+      {/* WAITING STATE (no frames, not generating, no error - shouldn't normally appear) */}
+      {!imagesReady && !state.isGenerating && !state.generationError && state.generatedFrames.length === 0 && (
+         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-50 backdrop-blur-md">
+             <Activity size={48} className="text-gray-500 mb-4" />
+             <p className="text-white font-mono tracking-widest">AWAITING FRAMES</p>
+             <p className="text-gray-500 text-xs mt-2">Upload an image and generate to begin</p>
          </div>
       )}
 

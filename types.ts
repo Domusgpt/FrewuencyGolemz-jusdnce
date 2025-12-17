@@ -113,9 +113,10 @@ export interface AppState {
   duration: number; 
   smoothness: number; 
   stutter: number; 
-  generatedFrames: GeneratedFrame[]; 
-  subjectCategory: SubjectCategory; 
+  generatedFrames: GeneratedFrame[];
+  subjectCategory: SubjectCategory;
   isGenerating: boolean;
+  generationError: string | null; // Store error message when generation fails
   credits: number;
 }
 
@@ -148,5 +149,6 @@ export const DEFAULT_STATE: AppState = {
   generatedFrames: [],
   subjectCategory: 'CHARACTER',
   isGenerating: false,
-  credits: 0, 
+  generationError: null,
+  credits: 0,
 };

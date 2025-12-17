@@ -242,11 +242,25 @@ const generateWithRetry = async (ai: GoogleGenAI, params: any, retries = 2) => {
     let lastError: any;
     for (let i = 0; i < retries; i++) {
         try {
-            return await ai.models.generateContent(params);
+            console.log(`[Gemini] Generation attempt ${i + 1}/${retries} with model: ${params.model}`);
+            const result = await ai.models.generateContent(params);
+            console.log(`[Gemini] Generation attempt ${i + 1} succeeded`);
+            return result;
         } catch (e: any) {
-            console.warn(`Gemini generation attempt ${i + 1} failed:`, e.message);
+            console.error(`[Gemini] Attempt ${i + 1} failed:`, e.message);
+            console.error('[Gemini] Error details:', {
+                name: e.name,
+                code: e.code,
+                status: e.status,
+                statusText: e.statusText,
+                message: e.message
+            });
             lastError = e;
-            await delay(1000 * Math.pow(2, i)); 
+            if (i < retries - 1) {
+                const waitTime = 1000 * Math.pow(2, i);
+                console.log(`[Gemini] Retrying in ${waitTime}ms...`);
+                await delay(waitTime);
+            }
         }
     }
     throw lastError;
@@ -445,6 +459,29 @@ const generateSingleSheet = async (
     }
 };
 
+// Helper to validate API key with a lightweight request
+const validateApiKey = async (ai: GoogleGenAI): Promise<boolean> => {
+    try {
+        console.log('[Gemini] Validating API key...');
+        // Try to list models to validate the key works
+        const models = await ai.models.list();
+        console.log('[Gemini] API key validated successfully. Available models:',
+            models?.models?.slice(0, 5).map((m: any) => m.name) || 'Unable to list');
+        return true;
+    } catch (e: any) {
+        console.error('[Gemini] API key validation failed:', e.message);
+        if (e.message?.includes('API_KEY_INVALID') || e.message?.includes('invalid')) {
+            throw new Error('API Key is invalid. Please check your GEMINI_API_KEY in GitHub Secrets.');
+        }
+        if (e.message?.includes('expired')) {
+            throw new Error('API Key has expired. Please generate a new key from Google AI Studio.');
+        }
+        // Don't block on validation failure for other reasons
+        console.warn('[Gemini] Validation check failed but continuing...');
+        return false;
+    }
+};
+
 export const generateDanceFrames = async (
   imageBase64: string,
   stylePrompt: string,
@@ -454,15 +491,28 @@ export const generateDanceFrames = async (
   onFrameUpdate: (frames: GeneratedFrame[]) => void
 ): Promise<{ frames: GeneratedFrame[], category: SubjectCategory }> => {
 
-  console.log('[Gemini] Starting generation...');
+  console.log('[Gemini] ====== STARTING GENERATION ======');
   console.log('[Gemini] API_KEY present:', !!API_KEY);
+  console.log('[Gemini] API_KEY length:', API_KEY?.length || 0);
+  console.log('[Gemini] API_KEY prefix:', API_KEY ? API_KEY.substring(0, 10) + '...' : 'N/A');
+  console.log('[Gemini] useTurbo:', useTurbo);
+  console.log('[Gemini] superMode:', superMode);
+  console.log('[Gemini] imageBase64 length:', imageBase64?.length || 0);
 
   if (!API_KEY) {
     console.error('[Gemini] API Key is missing! Check your environment variables.');
     throw new Error("API Key is missing. Please set GEMINI_API_KEY in GitHub Secrets.");
   }
 
+  if (!API_KEY.startsWith('AIza')) {
+    console.error('[Gemini] API Key format looks invalid. Expected to start with "AIza"');
+    throw new Error("API Key format is invalid. Please check your GEMINI_API_KEY.");
+  }
+
   const ai = new GoogleGenAI({ apiKey: API_KEY });
+
+  // Validate the key before attempting generation
+  await validateApiKey(ai);
   const masterSeed = Math.floor(Math.random() * 2147483647);
   let category: SubjectCategory = 'CHARACTER';
   if (/logo|text|word|letter|font|typography/i.test(motionPrompt)) category = 'TEXT';
