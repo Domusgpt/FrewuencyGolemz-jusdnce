@@ -5,6 +5,9 @@ import { GeneratedFrame, PoseType, EnergyLevel, SubjectCategory, FrameType, Shee
 // Strict API Key usage as per guidelines
 const API_KEY = process.env.API_KEY;
 
+// Debug: Log if API key is present (not the actual key)
+console.log('[Gemini] API Key status:', API_KEY ? `Set (${API_KEY.substring(0, 8)}...)` : 'MISSING');
+
 // --- UTILITIES ---
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -448,10 +451,16 @@ export const generateDanceFrames = async (
   motionPrompt: string,
   useTurbo: boolean,
   superMode: boolean,
-  onFrameUpdate: (frames: GeneratedFrame[]) => void 
+  onFrameUpdate: (frames: GeneratedFrame[]) => void
 ): Promise<{ frames: GeneratedFrame[], category: SubjectCategory }> => {
 
-  if (!API_KEY) throw new Error("API Key is missing.");
+  console.log('[Gemini] Starting generation...');
+  console.log('[Gemini] API_KEY present:', !!API_KEY);
+
+  if (!API_KEY) {
+    console.error('[Gemini] API Key is missing! Check your environment variables.');
+    throw new Error("API Key is missing. Please set GEMINI_API_KEY in GitHub Secrets.");
+  }
 
   const ai = new GoogleGenAI({ apiKey: API_KEY });
   const masterSeed = Math.floor(Math.random() * 2147483647);
