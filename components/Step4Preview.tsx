@@ -717,16 +717,21 @@ export const Step4Preview: React.FC<Step4Props> = ({ state, onGenerateMore, onSp
               const project = JSON.parse(ev.target?.result as string) as SavedProject;
               if (!project.frames) throw new Error("Invalid Rig");
               const emptySlot = decks.find(d => !d.rig);
-              if (emptySlot) {
-                  setDecks(prev => prev.map(d => d.id === emptySlot.id ? { ...d, rig: project, isActive: true, mixMode: 'sequencer' } : d));
-                  frameLookupRef.current.clear();
-                  // Re-process ALL decks to rebuild lookup
-                  // Note: In a real app we'd optimize this, but here we just process the new one and rely on deckId separation
-                  processRig(project.frames, emptySlot.id);
-              } else {
-                   setDecks(prev => prev.map(d => d.id === 3 ? { ...d, rig: project, isActive: true, mixMode: 'sequencer' } : d));
-                   processRig(project.frames, 3);
-              }
+              const targetSlotId = emptySlot ? emptySlot.id : 3;
+
+              setDecks(prev => prev.map(d => d.id === targetSlotId ? { ...d, rig: project, isActive: true, mixMode: 'sequencer' } : d));
+              frameLookupRef.current.clear();
+
+              // Process the rig and set imagesReady when done
+              processRig(project.frames, targetSlotId).then(() => {
+                  setImagesReady(true);
+                  // If this is the first rig loaded, initialize Kinetic Engine with these frames
+                  if (!kineticEngineRef.current) {
+                      kineticEngineRef.current = new KineticEngine();
+                  }
+                  kineticEngineRef.current.loadFramePool(project.frames);
+                  kineticEngineRef.current.setBPM(detectedBPM);
+              });
           } catch (err) { alert("Failed to load rig."); }
       };
       reader.readAsText(file);
