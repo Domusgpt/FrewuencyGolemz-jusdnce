@@ -346,7 +346,7 @@ const App: React.FC = () => {
             )}
 
             {appState.step === AppStep.PREVIEW && (
-                <div className="animate-holo-reveal">
+                <div className="animate-holo-reveal h-[calc(100vh-10rem)] min-h-[600px]">
                     <Step4Preview 
                         state={appState}
                         onGenerateMore={handleGenerateClick}
